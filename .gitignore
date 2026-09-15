@@ -1,0 +1,8 @@
+# Ignored files
+*.db
+*.db-journal
+*.db-wal
+temp-*
+node_modules/
+.DS_Store
+Thumbs.db
