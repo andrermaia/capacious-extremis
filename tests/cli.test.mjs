@@ -142,3 +142,11 @@ test('CLI: agent task lifecycle (start, step, finish)', () => {
   assert.equal(tasks[0].id, started.id);
   assert.equal(tasks[0].status, 'DONE');
 });
+
+test('CLI: remote HTTP init reports connection to remote API', () => {
+  const initRemote = runCli(['init', '--api-url', 'https://example.com/api/v1/context']);
+  assert.equal(initRemote.status, 'ok');
+  assert.equal(initRemote.apiUrl, 'https://example.com/api/v1/context');
+});
+
+

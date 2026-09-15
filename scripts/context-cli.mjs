@@ -46,7 +46,6 @@ function initializeDatabase(db, schemaPath = defaultSchemaPath) {
     const ddl = fs.readFileSync(schemaPath, 'utf8');
     db.exec(ddl);
   } else {
-    // Fallback embedded schema if file is moved
     db.exec(`
       CREATE TABLE IF NOT EXISTS system_knowledge (
         id TEXT PRIMARY KEY,
@@ -78,14 +77,165 @@ function initializeDatabase(db, schemaPath = defaultSchemaPath) {
   }
 }
 
-function main() {
+async function requestApi(baseUrl, endpoint, options = {}, token = null) {
+  const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...(options.headers || {})
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url.toString(), {
+    ...options,
+    headers
+  });
+
+  if (!res.ok) {
+    let errorText = await res.text();
+    try {
+      const errJson = JSON.parse(errorText);
+      errorText = errJson.message || errJson.error || errorText;
+    } catch {}
+    throw new Error(`API error (${res.status}): ${errorText}`);
+  }
+
+  return await res.json();
+}
+
+async function main() {
   const rawArgs = process.argv.slice(2);
   const options = parseArgs(rawArgs);
 
   const command = options.args[0] || 'help';
+  const apiUrl = options['api-url'] || process.env.CONTEXT_API_URL;
+  const apiToken = options['api-token'] || process.env.CONTEXT_API_TOKEN;
   const dbPath = options['db-path'] || process.env.CONTEXT_DB_PATH || path.resolve(process.cwd(), '.agents/context.db');
   const projectId = options.project || process.env.PROJECT_ID || path.basename(process.cwd());
 
+  // === REMOTE HTTP API ADAPTER ===
+  if (apiUrl) {
+    switch (command) {
+      case 'init': {
+        console.log(JSON.stringify({
+          status: 'ok',
+          message: 'Connected to remote Context API',
+          apiUrl,
+          project: projectId
+        }, null, 2));
+        return;
+      }
+
+      case 'list-modules': {
+        const data = await requestApi(apiUrl, `modules?project=${encodeURIComponent(projectId)}`, {}, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'query': {
+        let qs = `query?project=${encodeURIComponent(projectId)}`;
+        if (options.module) qs += `&module=${encodeURIComponent(options.module)}`;
+        if (options.phase) qs += `&phase=${encodeURIComponent(options.phase)}`;
+        if (options.type) qs += `&type=${encodeURIComponent(options.type)}`;
+
+        const data = await requestApi(apiUrl, qs, {}, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'get': {
+        const id = options.args[1] || options.id;
+        if (!id) throw new Error('Missing record ID for "get" command.');
+        const data = await requestApi(apiUrl, `knowledge/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, {}, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'upsert': {
+        const id = options.id || options.args[1];
+        const summary = options.summary;
+        if (summary && summary.length > 250) {
+          throw new Error(`Summary exceeds maximum limit of 250 characters (got ${summary.length}). Please keep summaries concise in English to minimize token consumption.`);
+        }
+
+        const body = {
+          id,
+          project_id: projectId,
+          module: options.module,
+          feature: options.feature,
+          knowledge_type: options.type || options.knowledge_type,
+          phase: options.phase,
+          tasks_progress: options.progress || options.tasks_progress || null,
+          summary,
+          details: options.details || null
+        };
+
+        const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'task-start': {
+        const body = {
+          id: options.id,
+          project_id: projectId,
+          module: options.module || 'general',
+          desc: options.desc || options.description || 'Unnamed task'
+        };
+        const data = await requestApi(apiUrl, `tasks/start?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'task-step': {
+        const body = {
+          id: options.id,
+          step: options.step,
+          project_id: projectId
+        };
+        const data = await requestApi(apiUrl, `tasks/step?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'task-finish': {
+        const body = {
+          id: options.id,
+          status: (options.status || 'DONE').toUpperCase(),
+          project_id: projectId
+        };
+        const data = await requestApi(apiUrl, `tasks/finish?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'list-tasks': {
+        let qs = `tasks?project=${encodeURIComponent(projectId)}`;
+        if (options.status) qs += `&status=${encodeURIComponent(options.status.toUpperCase())}`;
+        if (options.limit) qs += `&limit=${encodeURIComponent(options.limit)}`;
+
+        const data = await requestApi(apiUrl, qs, {}, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+    }
+  }
+
+  // === LOCAL SQLITE ADAPTER (Default) ===
   const db = getDatabase(dbPath);
 
   switch (command) {
@@ -305,9 +455,7 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
+main().catch(err => {
   console.error(JSON.stringify({ error: err.message }, null, 2));
   process.exit(1);
-}
+});
