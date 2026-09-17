@@ -16,6 +16,49 @@ A structured, database-backed knowledge and task persistence system for AI agent
 - When working on existing codebases (brownfield) to scan, partition, and retrieve module architecture, current behaviors, and technical debt.
 - At the **end of every task** to update task progress (`01/25`), log new decisions/debts, and close active tasks.
 
+## On-Screen Step Announcements
+
+Every stage MUST be announced to the user in plain text **before** its command runs, using exactly these labels so the user can follow the protocol on screen:
+
+| Stage | Label to print | When |
+|---|---|---|
+| 1 | `Etapa 1/3 · Contexto` | before `list-modules` / `query` |
+| 2 | `Etapa 2/3 · Tarefa` | before `task-start`; on `task-step` print the step text |
+| 3 | `Etapa 3/3 · Encerramento` | before `upsert` / `task-finish` |
+
+Example: `Etapa 2/3 · Tarefa — abrindo TASK para o módulo louza_fe`. The Claude Code hooks (see below) echo the same labels as system messages, so the two views stay aligned.
+
+## Target Selection (`--project` / `--api-url`)
+
+- Always pass `--project <id>`. The knowledge base holds one row set per project (`louza`, `qlave`, `qoincamera`, `qoinpass`, `qoinmsg`, `qoinpay`, `qpoker`, `qoinstore`, `qoinsite`, `qoinmodel`, `qoinreviews`); the default is the working-directory basename, which is usually wrong from a sub-folder.
+- Prefer the central server with `--api-url "https://takius.com.br/api/v1/context"` (or `CONTEXT_API_URL`). If the API is unreachable the CLI returns `{"error": ...}` and does **not** fall back: drop `--api-url` to use the local `.agents/context.db`. The `UserPromptSubmit` hook probes the API on every prompt and tells you which flags to use.
+
+## Enforcement via Claude Code Hooks
+
+`scripts/hooks/` ships four zero-dependency hooks wired in the project's `.claude/settings.json`:
+
+| Hook | Event | Effect |
+|---|---|---|
+| `on-prompt.mjs` | `UserPromptSubmit` | Detects the project from `cwd`, runs `list-modules` (API, then local), injects the protocol + module list as context, shows `Etapa 1/3` on screen |
+| `on-edit-guard.mjs` | `PreToolUse` on `Edit\|Write\|NotebookEdit` | **Denies** file edits until a `task-start` was observed in the session (files under `.agents/`, `.claude/` and `CLAUDE.md` are exempt) |
+| `on-cli-call.mjs` | `PostToolUse` on `Bash\|PowerShell` | Watches `context-cli.mjs` calls, records open/finished tasks per session, prints the stage of each call |
+| `on-stop.mjs` | `Stop` | **Blocks the end of the turn** while a task is open and sends the `task-finish` instruction back to the agent |
+
+Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json`. Known gap: edits made through shell commands (`sed`, heredocs) bypass the edit guard; the Stop hook still catches the unfinished task.
+
+Install in another repository:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-prompt.mjs\"", "timeout": 30 }] }],
+    "PreToolUse": [{ "matcher": "Edit|Write|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-edit-guard.mjs\"" }] }],
+    "PostToolUse": [{ "matcher": "Bash|PowerShell", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-cli-call.mjs\"" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-stop.mjs\"" }] }]
+  }
+}
+```
+
 ## The Three-Stage Agent Protocol
 
 Every interaction MUST execute the three stages in order:
