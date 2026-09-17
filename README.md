@@ -22,7 +22,12 @@ Modern AI agents often suffer from **context loss between sessions** or **token 
 │   └── schema.sql           # SQL DDL for SQLite / Postgres / Supabase
 ├── scripts/
 │   ├── context-cli.mjs      # Zero-dependency Node 24 CLI for database operations
-│   └── bootstrap-scan.mjs   # Brownfield codebase scanner to auto-discover modules
+│   ├── bootstrap-scan.mjs   # Brownfield codebase scanner to auto-discover modules
+│   └── hooks/               # Claude Code hooks that enforce the protocol on every prompt
+│       ├── on-prompt.mjs        # UserPromptSubmit: auto list-modules + protocol injection
+│       ├── on-edit-guard.mjs    # PreToolUse: deny Edit/Write until a task is open
+│       ├── on-cli-call.mjs      # PostToolUse: track task-start/finish, print stage on screen
+│       └── on-stop.mjs          # Stop: refuse to end the turn with an open task
 ├── tests/                   # Automated test suite using Node.js native test runner
 ├── .gitignore
 └── README.md
@@ -67,6 +72,17 @@ node scripts/bootstrap-scan.mjs --import --db-path .agents/context.db
 | `list-tasks` | Lists recent agent tasks and their status |
 
 ---
+
+## Enforcing the Protocol with Claude Code Hooks
+
+Instructions in `CLAUDE.md` are advisory. To make the protocol mandatory, wire the hooks from `scripts/hooks/` into `.claude/settings.json` (full snippet in `SKILL.md`, section *Enforcement via Claude Code Hooks*):
+
+- **UserPromptSubmit** runs `list-modules` for the project detected from `cwd` (remote API first, local SQLite as fallback) and injects the result plus the three-stage protocol into the model context.
+- **PreToolUse** on `Edit|Write|NotebookEdit` denies edits until a `task-start` has been observed in the session.
+- **PostToolUse** on `Bash|PowerShell` tracks `task-start` / `task-finish` and prints each stage on screen (`Etapa 1/3 · Contexto`, `Etapa 2/3 · Tarefa`, `Etapa 3/3 · Encerramento`).
+- **Stop** blocks the end of the turn while a task is still open.
+
+Set `CONTEXT_API_URL` to point the prompt hook at your server (default `https://takius.com.br/api/v1/context`).
 
 ## Agent Protocol
 
