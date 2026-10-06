@@ -123,16 +123,18 @@ export function runCli(root, args, { timeoutMs = 10000 } = {}) {
   }
 }
 
-// Try the remote API first (if configured), then fall back to the local SQLite DB.
+// Try the shared API first, then fall back to the local read-only cache.
 // Returns { ok, data, source: 'api'|'local', apiUrl, apiError }.
 export function runCliWithFallback(root, args) {
-  const apiUrl = process.env.CONTEXT_API_URL || 'https://takius.com.br/api/v1/context';
+  const apiUrl = process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
   const remote = runCli(root, [...args, '--api-url', apiUrl], { timeoutMs: 8000 });
   if (remote.ok) return { ...remote, source: 'api', apiUrl };
-  const local = runCli(root, args);
+  const local = runCli(root, [...args, '--no-api']);
   return { ...local, source: 'local', apiUrl, apiError: remote.error };
 }
 
-export function sourceFlags(source, apiUrl) {
-  return source === 'api' ? `--api-url "${apiUrl}"` : '(sem --api-url: API fora do ar, usando .agents/context.db)';
+export function sourceFlags(source) {
+  return source === 'api'
+    ? '(a API compartilhada é o padrão do CLI: não passe --api-url nem --no-api)'
+    : '(API fora do ar: leitura cai no cache local .agents/context.db, mas GRAVAÇÃO VAI FALHAR — não invente workaround, avise o usuário)';
 }

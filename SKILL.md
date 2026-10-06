@@ -28,10 +28,11 @@ Every stage MUST be announced to the user in plain text **before** its command r
 
 Example: `Etapa 2/3 · Tarefa — abrindo TASK para o módulo louza_fe`. The Claude Code hooks (see below) echo the same labels as system messages, so the two views stay aligned.
 
-## Target Selection (`--project` / `--api-url`)
+## Target Selection (`--project`)
 
-- Always pass `--project <id>`. The knowledge base holds one row set per project (`louza`, `qlave`, `qoincamera`, `qoinpass`, `qoinmsg`, `qoinpay`, `qpoker`, `qoinstore`, `qoinsite`, `qoinmodel`, `qoinreviews`); the default is the working-directory basename, which is usually wrong from a sub-folder.
-- Prefer the central server with `--api-url "https://takius.com.br/api/v1/context"` (or `CONTEXT_API_URL`). If the API is unreachable the CLI returns `{"error": ...}` and does **not** fall back: drop `--api-url` to use the local `.agents/context.db`. The `UserPromptSubmit` hook probes the API on every prompt and tells you which flags to use.
+- Always pass `--project <id>`. The knowledge base holds one row set per project (`louza`, `qlave`, `qoincamera`, `qoinpass`, `qoinmsg`, `qoinpay`, `qpoker`, `qoinstore`, `qoinsite`, `qoinmodel`, `qoinreviews`, `projetos`); the default is the working-directory basename, which is usually wrong from a sub-folder.
+- **The CLI talks to the shared API by default** — `https://api.takius.com.br/v1/context`, PostgreSQL `agent_context` on the Takius server. No `--api-url` needed; set `CONTEXT_API_TOKEN` (the API answers 401 without it).
+- `.agents/context.db` is now only a **read-only cache**, refreshed by `context-cli.mjs pull`. When the API is down, reads fall back to it with a warning on stderr and **writes fail loudly** — that is deliberate: writing locally would fork the shared memory in silence. `--no-api` forces the local file for both, and is an explicit offline decision, not a workaround for an outage.
 
 ## Enforcement via Claude Code Hooks
 
@@ -173,17 +174,20 @@ Before delivering your final response to the user:
 
 ## Database Configuration
 
-The database backend is completely abstracted via `context-cli.mjs`:
+The backend is abstracted by `context-cli.mjs`. Since 2026-09-18 the source of truth is remote:
 
-1. **Default (Zero-Config SQLite)**:
-   - File location: `.agents/context.db`
-   - Uses Node.js 24 native `node:sqlite`. No external dependencies or installation required.
+1. **Shared API (default)** — `https://api.takius.com.br/v1/context`, served by the `context_api` Swarm
+   stack on the Takius server against the PostgreSQL database `agent_context`. Every agent on any
+   machine reads and writes the same rows. Requires `CONTEXT_API_TOKEN`; override the URL with
+   `CONTEXT_API_URL` or `--api-url`. Source lives in `context-api/` (server, Dockerfile, stack.yml).
 
-2. **Custom Location or Remote DB**:
-   - Set environment variables or pass flags:
-     - `--db-path <path>` or `CONTEXT_DB_PATH=<path>`
-     - `--project <id>` or `PROJECT_ID=<name>`
-   - To connect to remote services (e.g. Supabase, PostgreSQL), configure connection credentials in `.env`.
+2. **Local cache** — `.agents/context.db` (native `node:sqlite`, Node >= 22). Refresh it with
+   `context-cli.mjs pull`; it serves reads while the API is unreachable. Relocate with `--db-path` or
+   `CONTEXT_DB_PATH`. Both default to the current working directory, so from another folder the CLI
+   would silently address an empty file — always be explicit.
+
+3. **Offline (`--no-api`)** — reads *and* writes the local file. Only for deliberate offline work:
+   whatever is written there never reaches the other agents until someone merges it by hand.
 
 ---
 
@@ -195,6 +199,7 @@ The database backend is completely abstracted via `context-cli.mjs`:
 | "I'll update the database on the next turn." | Next turns lose working memory. Run post-execution upserts immediately before closing. |
 | "250 characters is too short to explain." | Use `summary` for the high-level fact (<250 chars) and pass detailed rationale to `--details`. |
 | "I can write summaries in Portuguese." | English tokenization consumes 30-50% fewer tokens, maximizing context efficiency. |
+| "The API is down, I'll just add `--no-api` to finish." | That writes into a cache nobody else reads, which is exactly how the base forked before. Tell the user the API is down. |
 
 ## Red Flags - STOP and Correct
 

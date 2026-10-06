@@ -22,7 +22,7 @@ function parseArgs(rawArgs) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const apiUrl = options['api-url'] || process.env.CONTEXT_API_URL || 'https://qa.takius.com.br/api/v1/context';
+  const apiUrl = options['api-url'] || process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
   const apiToken = options['api-token'] || process.env.CONTEXT_API_TOKEN || null;
   const dbPath = path.resolve(options['db-path'] || process.env.CONTEXT_DB_PATH || '.agents/context.db');
 

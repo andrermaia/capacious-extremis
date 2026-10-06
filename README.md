@@ -82,7 +82,7 @@ Instructions in `CLAUDE.md` are advisory. To make the protocol mandatory, wire t
 - **PostToolUse** on `Bash|PowerShell` tracks `task-start` / `task-finish` and prints each stage on screen (`Etapa 1/3 · Contexto`, `Etapa 2/3 · Tarefa`, `Etapa 3/3 · Encerramento`).
 - **Stop** blocks the end of the turn while a task is still open.
 
-Set `CONTEXT_API_URL` to point the prompt hook at your server (default `https://takius.com.br/api/v1/context`).
+Set `CONTEXT_API_URL` to point the prompt hook at your server (default `https://api.takius.com.br/v1/context`).
 
 ## Agent Protocol
 
@@ -109,3 +109,23 @@ Before analyzing, investigating, or writing code for ANY task, you MUST invoke t
 
 ## License
 MIT
+
+## Claude Code on the web
+
+Cloud sessions do not load plugins or your local `~/.claude`, so `cloud/setup.sh` installs the skill
+inside the VM: it clones this repository to `~/.agents/skills/managing-system-context`, registers the
+protocol hooks in the VM's `~/.claude/settings.json`, writes the protocol to the VM's `~/.claude/CLAUDE.md`,
+and a `SessionStart` hook links `~/.agents` into each cloned repository (excluded from git).
+
+In claude.ai/code → environment settings:
+
+- **Environment variables**: `CONTEXT_API_TOKEN=<token>` and `SKILL_REPO_TOKEN=<fine-grained GitHub token, read-only Contents on this repo>`.
+- **Network access**: Custom, add `api.takius.com.br`, keep the default list.
+- **Setup script**:
+
+  ```bash
+  S=~/.agents/skills/managing-system-context; [ -d $S ] || git clone -q --depth 1 "https://x-access-token:$SKILL_REPO_TOKEN@github.com/andrermaia/capacious-extremis.git" $S
+  bash $S/cloud/setup.sh
+  ```
+
+Hooks only run in single-repository sessions.

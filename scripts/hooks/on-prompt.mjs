@@ -13,7 +13,7 @@ const { project, folder } = detectProject(input, root);
 
 const result = runCliWithFallback(root, ['list-modules', '--project', project]);
 const modules = result.ok && Array.isArray(result.data) ? result.data : [];
-const flags = sourceFlags(result.source, result.apiUrl);
+const flags = sourceFlags(result.source);
 
 const state = loadState(input.session_id);
 state.project = project;
@@ -28,11 +28,12 @@ const moduleLine = modules.length
 
 const cli = 'node .agents/skills/managing-system-context/scripts/context-cli.mjs';
 const projectFlag = `--project ${project}`;
-const apiFlag = result.source === 'api' ? ` --api-url "${result.apiUrl}"` : '';
+// The CLI already targets the shared API by default; no flag needed on the happy path.
+const apiFlag = '';
 
 const context = [
   `[managing-system-context] ${STAGE.CONTEXT} carregada automaticamente pelo hook.`,
-  `Projeto detectado: ${project} (pasta: ${folder}). Fonte: ${result.source === 'api' ? 'API Takius' : 'SQLite local .agents/context.db'}${result.apiError ? ` — API indisponível: ${String(result.apiError).slice(0, 120)}` : ''}.`,
+  `Projeto detectado: ${project} (pasta: ${folder}). Fonte: ${result.source === 'api' ? `API compartilhada ${result.apiUrl}` : 'cache local .agents/context.db (somente leitura)'}${result.apiError ? ` — API indisponível: ${String(result.apiError).slice(0, 120)}` : ''}.`,
   `Módulos: ${moduleLine}`,
   '',
   'PROTOCOLO OBRIGATÓRIO (anuncie cada etapa ao usuário em texto antes de executá-la, exatamente com estes rótulos):',
@@ -40,7 +41,7 @@ const context = [
   `- "${STAGE.TASK}": ${cli} task-start ${projectFlag} --module <módulo> --desc "<pedido>"${apiFlag}  (guarde o id TASK-...)`,
   `- "${STAGE.CLOSE}": upsert de decisões/débitos (summary em inglês, <= 250 chars) e ${cli} task-finish ${projectFlag} --id <TASK_ID> --status DONE${apiFlag}`,
   'Edit/Write ficam bloqueados pelo hook até existir uma tarefa aberta nesta sessão. O turno não encerra com tarefa aberta.',
-  `Se o projeto detectado estiver errado, use outro --project (disponíveis: louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews) e mantenha ${sourceFlags(result.source, result.apiUrl)}.`,
+  `Se o projeto detectado estiver errado, use outro --project (disponíveis: louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews) ${flags}.`,
 ].join('\n');
 
 emit({

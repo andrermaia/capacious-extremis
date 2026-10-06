@@ -11,9 +11,12 @@ const cliPath = path.resolve(__dirname, '../scripts/context-cli.mjs');
 const tempDbPath = path.resolve(__dirname, 'temp-test-context.db');
 
 function runCli(args, env = {}) {
+  // The CLI now targets the shared API by default; these tests exercise the local
+  // SQLite adapter, so force it off unless the case is explicitly about a remote URL.
+  const offline = args.includes('--api-url') ? [] : ['--no-api'];
   const result = execFileSync(
     process.execPath,
-    [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', ...args],
+    [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', ...offline, ...args],
     {
       encoding: 'utf8',
       env: { ...process.env, ...env },

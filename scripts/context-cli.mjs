@@ -8,6 +8,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultSchemaPath = path.resolve(__dirname, '../references/schema.sql');
 
+// The shared knowledge base lives on the Takius server; the local SQLite file is
+// only a read-only cache, refreshed by `pull`. Use --no-api to work fully offline.
+const DEFAULT_API_URL = 'https://api.takius.com.br/v1/context';
+const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks'];
+const WRITE_COMMANDS = ['upsert', 'task-start', 'task-step', 'task-finish'];
+
+// Raised by the CLI itself (bad flags, oversized summary) — never a connectivity problem.
+class CliError extends Error {}
+
+// Distinguishes "the server is unreachable/broken" from "the input is wrong":
+// only the former may fall back to the local cache.
+function isApiUnavailable(err) {
+  if (err instanceof CliError) return false;
+  const match = /^API error \((\d{3})\)/.exec(err.message || '');
+  if (!match) return true; // fetch itself failed: DNS, TLS, timeout, refused
+  const status = Number(match[1]);
+  return status === 404 || status === 408 || status === 429 || status >= 500;
+}
+
+// Flags that take no value. Without this list `--no-api query` would consume
+// "query" as the flag's value and leave the CLI with no command at all.
+const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help']);
+
 function parseArgs(rawArgs) {
   const options = {
     args: []
@@ -18,7 +41,7 @@ function parseArgs(rawArgs) {
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       const next = rawArgs[i + 1];
-      if (next && !next.startsWith('--')) {
+      if (next && !next.startsWith('--') && !BOOLEAN_FLAGS.has(key)) {
         options[key] = next;
         i += 2;
       } else {
@@ -110,13 +133,54 @@ async function main() {
   const options = parseArgs(rawArgs);
 
   const command = options.args[0] || 'help';
-  const apiUrl = options['api-url'] || process.env.CONTEXT_API_URL;
+  const apiUrl = options['no-api'] ? null : (options['api-url'] || process.env.CONTEXT_API_URL || DEFAULT_API_URL);
   const apiToken = options['api-token'] || process.env.CONTEXT_API_TOKEN;
   const dbPath = options['db-path'] || process.env.CONTEXT_DB_PATH || path.resolve(process.cwd(), '.agents/context.db');
   const projectId = options.project || process.env.PROJECT_ID || path.basename(process.cwd());
 
+  // === LOCAL CACHE REFRESH ===
+  // Mirrors the whole server database into the local SQLite file, so a read still
+  // works (with a warning) when the API is down.
+  if (command === 'pull') {
+    if (!apiUrl) throw new Error('"pull" needs the Context API; do not pass --no-api.');
+    const data = await requestApi(apiUrl, 'export', {}, apiToken);
+    const cache = getDatabase(dbPath);
+    initializeDatabase(cache);
+    cache.exec('BEGIN');
+    try {
+      cache.exec('DELETE FROM system_knowledge; DELETE FROM agent_tasks;');
+      const insertKnowledge = cache.prepare(`
+        INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const r of data.system_knowledge) {
+        insertKnowledge.run(r.id, r.project_id, r.module, r.feature, r.knowledge_type, r.phase, r.tasks_progress, r.summary, r.details, r.updated_at);
+      }
+      const insertTask = cache.prepare(`
+        INSERT INTO agent_tasks (id, project_id, module, task_description, status, current_step, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const r of data.agent_tasks) {
+        insertTask.run(r.id, r.project_id, r.module, r.task_description, r.status, r.current_step, r.created_at, r.updated_at);
+      }
+      cache.exec('COMMIT');
+    } catch (err) {
+      cache.exec('ROLLBACK');
+      throw err;
+    }
+    console.log(JSON.stringify({
+      status: 'ok',
+      cache: dbPath,
+      system_knowledge: data.system_knowledge.length,
+      agent_tasks: data.agent_tasks.length,
+      exported_at: data.exported_at
+    }, null, 2));
+    return;
+  }
+
   // === REMOTE HTTP API ADAPTER ===
   if (apiUrl) {
+    try {
     switch (command) {
       case 'init': {
         console.log(JSON.stringify({
@@ -147,7 +211,7 @@ async function main() {
 
       case 'get': {
         const id = options.args[1] || options.id;
-        if (!id) throw new Error('Missing record ID for "get" command.');
+        if (!id) throw new CliError('Missing record ID for "get" command.');
         const data = await requestApi(apiUrl, `knowledge/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, {}, apiToken);
         console.log(JSON.stringify(data, null, 2));
         return;
@@ -157,7 +221,7 @@ async function main() {
         const id = options.id || options.args[1];
         const summary = options.summary;
         if (summary && summary.length > 250) {
-          throw new Error(`Summary exceeds maximum limit of 250 characters (got ${summary.length}). Please keep summaries concise in English to minimize token consumption.`);
+          throw new CliError(`Summary exceeds maximum limit of 250 characters (got ${summary.length}). Please keep summaries concise in English to minimize token consumption.`);
         }
 
         const body = {
@@ -233,6 +297,20 @@ async function main() {
         return;
       }
     }
+    } catch (err) {
+      // A rejected payload (400/401/403/404-on-record) is the agent's fault: surface it.
+      if (!isApiUnavailable(err)) throw err;
+      if (WRITE_COMMANDS.includes(command)) {
+        throw new Error(
+          `Context API unavailable (${err.message}). Write refused: the server is the source of truth, ` +
+          `and writing to the local cache would diverge in silence. Retry, or pass --no-api to work offline on purpose.`
+        );
+      }
+      process.stderr.write(
+        `[context-cli] Context API unavailable (${err.message}); reading the local cache at ${dbPath}, ` +
+        `which may be stale. Run "pull" once the API is back.\n`
+      );
+    }
   }
 
   // === LOCAL SQLITE ADAPTER (Default) ===
@@ -299,7 +377,7 @@ async function main() {
       initializeDatabase(db);
       const id = options.args[1] || options.id;
       if (!id) {
-        throw new Error('Missing record ID for "get" command.');
+        throw new CliError('Missing record ID for "get" command.');
       }
       const row = db.prepare(`SELECT * FROM system_knowledge WHERE project_id = ? AND id = ?`).get(projectId, id);
       if (!row) {
@@ -327,7 +405,7 @@ async function main() {
       }
 
       if (summary.length > 250) {
-        throw new Error(`Summary exceeds maximum limit of 250 characters (got ${summary.length}). Please keep summaries concise in English to minimize token consumption.`);
+        throw new CliError(`Summary exceeds maximum limit of 250 characters (got ${summary.length}). Please keep summaries concise in English to minimize token consumption.`);
       }
 
       const validTypes = ['architecture_decision', 'system_model', 'current_behavior', 'future_revision', 'technical_debt'];
@@ -447,8 +525,11 @@ async function main() {
           'task-start --module <m> --desc "<description>"',
           'task-step --id <id> --step "<step>"',
           'task-finish --id <id> [--status DONE|BLOCKED]',
-          'list-tasks [--status <s>]'
-        ]
+          'list-tasks [--status <s>]',
+          'pull   (refresh the local read-only cache from the API)'
+        ],
+        target: `${DEFAULT_API_URL} by default; --no-api forces the local SQLite cache`,
+        auth: 'CONTEXT_API_TOKEN (or --api-token) is required by the API'
       }, null, 2));
       break;
     }

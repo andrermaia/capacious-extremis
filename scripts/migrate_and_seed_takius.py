@@ -6,7 +6,7 @@ DB_CONFIG = {
     'host': '127.0.0.1',
     'port': 5432,
     'user': 'postgres',
-    'password': 'REDACTED',
+    'password': os.environ.get('PGPASSWORD'),
     'dbname': 'takius'
 }
 

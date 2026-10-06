@@ -13,9 +13,10 @@ const tempDir = path.resolve(__dirname, 'temp-e2e-workspace');
 const dbPath = path.join(tempDir, 'context.db');
 
 function runCli(args) {
+  // This lifecycle runs entirely against the local SQLite file, never the shared API.
   const result = execFileSync(
     process.execPath,
-    [cliPath, '--db-path', dbPath, '--project', 'e2e-project', ...args],
+    [cliPath, '--db-path', dbPath, '--project', 'e2e-project', '--no-api', ...args],
     { encoding: 'utf8' }
   );
   return JSON.parse(result.trim());

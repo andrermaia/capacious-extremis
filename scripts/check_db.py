@@ -1,8 +1,9 @@
+import os
 import psycopg2
 import sys
 
 try:
-    conn = psycopg2.connect(host='127.0.0.1', port=5432, user='postgres', password='REDACTED', dbname='takius')
+    conn = psycopg2.connect(host='127.0.0.1', port=5432, user='postgres', password=os.environ.get('PGPASSWORD'), dbname='takius')
     cur = conn.cursor()
     cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;")
     tables = [r[0] for r in cur.fetchall()]
