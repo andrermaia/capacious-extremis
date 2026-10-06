@@ -119,13 +119,12 @@ and a `SessionStart` hook links `~/.agents` into each cloned repository (exclude
 
 In claude.ai/code → environment settings:
 
-- **Environment variables**: `CONTEXT_API_TOKEN=<token>` and `SKILL_REPO_TOKEN=<fine-grained GitHub token, read-only Contents on this repo>`.
+- **Environment variables**: `CONTEXT_API_TOKEN=<token>`.
 - **Network access**: Custom, add `api.takius.com.br`, keep the default list.
 - **Setup script**:
 
   ```bash
-  S=~/.agents/skills/managing-system-context; [ -d $S ] || git clone -q --depth 1 "https://x-access-token:$SKILL_REPO_TOKEN@github.com/andrermaia/capacious-extremis.git" $S
-  bash $S/cloud/setup.sh
+  curl -fsSL https://raw.githubusercontent.com/andrermaia/capacious-extremis/main/cloud/setup.sh | bash
   ```
 
 Hooks only run in single-repository sessions.
