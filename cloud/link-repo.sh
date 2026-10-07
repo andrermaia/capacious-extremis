@@ -9,4 +9,6 @@ if [ -d "$dir/.git" ] && ! grep -qx '.agents' "$exclude" 2>/dev/null; then
   mkdir -p "$dir/.git/info"
   echo '.agents' >> "$exclude"
 fi
+# Git on the self-hosted Gitea (no-op without TAKIUS_GIT_TOKEN).
+sh "$(dirname "$0")/takius-git.sh"
 exit 0

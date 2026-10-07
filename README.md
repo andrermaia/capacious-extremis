@@ -119,8 +119,15 @@ and a `SessionStart` hook links `~/.agents` into each cloned repository (exclude
 
 In claude.ai/code → environment settings:
 
-- **Environment variables**: `CONTEXT_API_TOKEN=<token>`.
-- **Network access**: Custom, add `api.takius.com.br`, keep the default list.
+- **Environment variables**: `CONTEXT_API_TOKEN=<token>`; optionally `TAKIUS_GIT_TOKEN=<Gitea token>`
+  (repository read and write).
+- **Network access**: Custom, add `api.takius.com.br` (and `git.takius.com.br` with the Gitea token),
+  keep the default list.
+
+With `TAKIUS_GIT_TOKEN`, the `SessionStart` hook also runs `cloud/takius-git.sh`: git authenticates on
+`git.takius.com.br` with the token (read from the environment, never written to disk) and every repository
+cloned from `github.com/andrermaia/<name>` gets a `takius` remote at `git.takius.com.br/andre/<name>.git`.
+Override with `TAKIUS_GIT_HOST`, `TAKIUS_GIT_OWNER`, `TAKIUS_GIT_USER`, `TAKIUS_GITHUB_OWNER`.
 - **Setup script**:
 
   ```bash

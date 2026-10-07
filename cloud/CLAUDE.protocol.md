@@ -11,3 +11,5 @@ The knowledge base is shared on the Takius server: `https://api.takius.com.br/v1
 3. **Etapa 3/3 · Encerramento**: upsert new decisions, models or debts (summaries in **English**, max **250 characters**), update progress, then `node .agents/skills/managing-system-context/scripts/context-cli.mjs task-finish --project <p> --id <TASK_ID> --status DONE` — always with the literal id, never a shell variable.
 
 `.agents` in the repository is a symlink created by a SessionStart hook and listed in `.git/info/exclude`: never commit it.
+
+Git: the source of truth and CI/CD (Gitea Actions) live on `git.takius.com.br`; GitHub is a mirror. When `TAKIUS_GIT_TOKEN` is set, each cloned repository has a `takius` remote: push work branches to it too (`git push -u takius <branch>`) so CI runs. After cloning a repository mid-session, run `sh ~/.agents/skills/managing-system-context/cloud/takius-git.sh` to give it the remote.
