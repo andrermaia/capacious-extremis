@@ -57,6 +57,16 @@ test('adds the takius remote to clones of the GitHub owner only', (t) => {
   assert.equal(v.git(['-C', semOrigin, 'remote']), '');
 });
 
+test('multi-repository session: the project dir holds the clones', (t) => {
+  const v = vm();
+  t.after(() => fs.rmSync(v.base, { recursive: true, force: true }));
+  const louza = v.clone('louza', 'https://github.com/andrermaia/louza');
+  const fe = v.clone('louza-fe', 'https://github.com/andrermaia/louza-fe');
+  v.run({ TAKIUS_GIT_TOKEN: 'tok', CLAUDE_PROJECT_DIR: v.root });
+  assert.equal(v.git(['-C', louza, 'remote', 'get-url', 'takius']), 'https://git.takius.com.br/andre/louza.git');
+  assert.equal(v.git(['-C', fe, 'remote', 'get-url', 'takius']), 'https://git.takius.com.br/andre/louza-fe.git');
+});
+
 test('running again is idempotent and fixes a stale takius url', (t) => {
   const v = vm();
   t.after(() => fs.rmSync(v.base, { recursive: true, force: true }));

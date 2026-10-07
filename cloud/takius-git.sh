@@ -32,7 +32,10 @@ git config --global --add "$key" \
   '!f() { [ "$1" = get ] || exit 0; echo "username=${TAKIUS_GIT_USER:-'"$gitea_owner"'}"; echo "password=${TAKIUS_GIT_TOKEN}"; }; f'
 
 dir="${CLAUDE_PROJECT_DIR:-$PWD}"
-root="${TAKIUS_SCAN_DIR:-$(dirname "$dir")}"
+# One-repository session: the project is the clone, its siblings sit beside it.
+# Multi-repository session: the project dir is the folder holding the clones.
+if [ -d "$dir/.git" ]; then parent=$(dirname "$dir"); else parent="$dir"; fi
+root="${TAKIUS_SCAN_DIR:-$parent}"
 for repo in "$root"/*/; do
   repo="${repo%/}"
   [ -d "$repo/.git" ] || continue
