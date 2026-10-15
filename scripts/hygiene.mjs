@@ -34,8 +34,12 @@ export function notEnglish(summary) {
   return ws.filter((w) => PT_WORDS.has(w)).length >= 3;
 }
 
+// bootstrap-scan rows ("Discovered module X. Key files: ...") list build files: two Next apps
+// look alike without being the same fact, so they never count as duplicates.
+const SCANNER_ROW = /^Discovered module /;
+
 export function duplicates(rows, threshold = LIMITS.duplicateJaccard) {
-  const sets = rows.map((r) => ({ r, s: new Set(words(r.summary).filter((w) => w.length >= 3 && !STOP.has(w))) })).filter((x) => x.s.size >= 5);
+  const sets = rows.filter((r) => !SCANNER_ROW.test(r.summary || '')).map((r) => ({ r, s: new Set(words(r.summary).filter((w) => w.length >= 3 && !STOP.has(w))) })).filter((x) => x.s.size >= 5);
   const pairs = [];
   for (let i = 0; i < sets.length; i++) {
     for (let j = i + 1; j < sets.length; j++) {

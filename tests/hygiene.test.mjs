@@ -21,6 +21,8 @@ test('near-duplicate summaries pair up inside a project only', () => {
     { id: 'B', project_id: 'louza', summary: s },
     { id: 'C', project_id: 'qoinpass', summary: s },
     { id: 'D', project_id: 'louza', summary: 'Totally different words about payments webhooks retries' },
+    { id: 'MOD-1', project_id: 'louza', summary: 'Discovered module "a" at "a". Key files: build-manifest.json, BUILD_ID, .rscinfo, .previewinfo, .tsbuildinfo.' },
+    { id: 'MOD-2', project_id: 'louza', summary: 'Discovered module "b" at "b". Key files: build-manifest.json, BUILD_ID, .rscinfo, .previewinfo, .tsbuildinfo.' },
   ]);
   assert.deepEqual(pairs.map((p) => [p.a, p.b, p.similarity]), [['A', 'B', 1]]);
 });
