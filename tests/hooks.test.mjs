@@ -314,3 +314,13 @@ test('session start shows the hygiene report while it has findings', async () =>
   api.setHygiene({ id: 'HYGIENE-REPORT', knowledge_type: 'current_behavior', summary: 'Hygiene: nothing to do.' });
   assert.doesNotMatch((await sessionStart('s15')).hookSpecificOutput.additionalContext, /Faxina/);
 });
+
+test('a background-task notification continues the task without searching the base', async () => {
+  await prompt('s16', 'corrija o boletim do louza');
+  const searches = api.routes('search').length;
+  const out = await prompt('s16', ['<task-notification>', '<task-id>abc</task-id>', '<status>completed</status>', '</task-notification>'].join(String.fromCharCode(10)));
+  assert.equal(api.routes('search').length, searches);
+  assert.equal(api.routes('tasks/step').at(-1).body.step, 'aviso de tarefa em segundo plano');
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /Da base/);
+  assert.equal(state('s16').lastDesc, 'corrija o boletim do louza');
+});

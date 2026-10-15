@@ -17,7 +17,10 @@ const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
-const prompt = cleanPrompt(input.prompt);
+// A background task finishing comes in as a <task-notification> "prompt": it continues the
+// work, it is not a request, so it is neither searched nor described by its XML.
+const notice = /^\s*<task-notification>/.test(String(input.prompt || ''));
+const prompt = notice ? 'aviso de tarefa em segundo plano' : cleanPrompt(input.prompt);
 const state = loadState(input.session_id);
 
 // The session-start hook already showed the module list: then the prompt hook skips it
@@ -39,7 +42,7 @@ const closing = stale.map((t) =>
 let module = current?.module;
 let taskRun;
 if (current) {
-  taskRun = runCliAsync(root, ['task-step', '--project', project, '--id', current.id, '--step', `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
+  taskRun = runCliAsync(root, ['task-step', '--project', project, '--id', current.id, '--step', notice ? prompt : `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
 } else {
   // First prompt ever for this project: wait for the module list to pick the module.
   const known = cached || (await listing).data;
@@ -49,7 +52,7 @@ if (current) {
 
 // The agent's first move used to be a query/search turn that re-read the whole context:
 // the hook searches the base with the prompt's words instead, in parallel.
-const words = searchWords(prompt);
+const words = notice ? [] : searchWords(prompt);
 const searching = words.length
   ? runCliAsync(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
   : null;
@@ -74,7 +77,7 @@ state.source = result.source;
 state.apiUrl = result.apiUrl;
 state.contextQueried = true;
 state.lastModule = module;
-state.lastDesc = prompt;
+if (!notice) state.lastDesc = prompt;
 state.turn = { promptId: input.prompt_id || null, upserts: 0, reminded: false, startedAt: new Date().toISOString() };
 saveState(input.session_id, state);
 
