@@ -15,6 +15,8 @@ import {
 
 const input = readStdinJson();
 if (input.agent_id) process.exit(0);
+const root = projectRoot(input);
+if (!root) process.exit(0); // outside every project: nothing to track
 
 const target = String(input.tool_input?.file_path || input.tool_input?.notebook_path || '').replace(/\\/g, '/');
 if (/\/(\.agents|\.claude)\//.test(target) || /\/CLAUDE\.md$/.test(target)) process.exit(0);
@@ -30,7 +32,6 @@ if (open.length > 0) {
   process.exit(0);
 }
 
-const root = projectRoot(input);
 const project = state.project || detectProject(input, root).project;
 const module = state.lastModule || DEFAULT_MODULE;
 const desc = state.lastDesc ? `continuação: ${state.lastDesc}` : `edição de ${path.basename(target)}`;

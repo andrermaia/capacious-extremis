@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 export const STAGE = {
   CONTEXT: 'Etapa 1/3 · Contexto',
@@ -49,10 +50,12 @@ export function emit(obj) {
 
 const SKILL_REL = path.join('.agents', 'skills', 'managing-system-context');
 
-// Walk up from cwd until a folder containing the skill is found; fall back to
-// CLAUDE_PROJECT_DIR (set by Claude Code) or cwd itself.
+// Walk up from the session folder (or CLAUDE_PROJECT_DIR) to the folder that holds the
+// skill. null means the session is outside every project — a scratch folder, Temp, a
+// smoke test: the hooks then stay out of the way (the universal rules still apply,
+// they come from ~/.claude/CLAUDE.md).
 export function projectRoot(input) {
-  const candidates = [input.cwd, process.env.CLAUDE_PROJECT_DIR, process.cwd()].filter(Boolean);
+  const candidates = [input.cwd, process.env.CLAUDE_PROJECT_DIR].filter(Boolean);
   for (const start of candidates) {
     let dir = path.resolve(start);
     for (;;) {
@@ -62,11 +65,29 @@ export function projectRoot(input) {
       dir = parent;
     }
   }
-  return process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
+  return null;
 }
 
-export function cliPath(root) {
-  return path.join(root, '.agents', 'skills', 'managing-system-context', 'scripts', 'context-cli.mjs');
+// The CLI next to these hooks, wherever the skill is installed (project, ~/.agents, plugin).
+const SCRIPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export function cliPath() {
+  return path.join(SCRIPTS_DIR, 'context-cli.mjs');
+}
+export function scriptPath(name) {
+  return path.join(SCRIPTS_DIR, name);
+}
+
+// A session opened straight in <root>/louza does not load <root>/.claude/settings.local.json,
+// so the token may be missing from the environment: read it from the project root then.
+export function cliEnv(root) {
+  if (process.env.CONTEXT_API_TOKEN || !root) return process.env;
+  for (const name of ['settings.local.json', 'settings.json']) {
+    try {
+      const token = JSON.parse(fs.readFileSync(path.join(root, '.claude', name), 'utf8')).env?.CONTEXT_API_TOKEN;
+      if (token) return { ...process.env, CONTEXT_API_TOKEN: token };
+    } catch {}
+  }
+  return process.env;
 }
 
 // Derive the knowledge-base project from the working directory.
@@ -212,7 +233,8 @@ export function upsertReminder(taskId) {
 
 // Run the context CLI and parse its JSON stdout. Returns { ok, data, error }.
 export function runCli(root, args, { timeoutMs = 10000 } = {}) {
-  const res = spawnSync(process.execPath, [cliPath(root), ...args], {
+  const res = spawnSync(process.execPath, [cliPath(), ...args], {
+    env: cliEnv(root),
     cwd: root,
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -224,7 +246,7 @@ export function runCli(root, args, { timeoutMs = 10000 } = {}) {
 // Same as runCli, without blocking: lets the prompt hook run list-modules and task-start together.
 export function runCliAsync(root, args, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath(root), ...args], { cwd: root, windowsHide: true });
+    const child = spawn(process.execPath, [cliPath(), ...args], { cwd: root, env: cliEnv(root), windowsHide: true });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);

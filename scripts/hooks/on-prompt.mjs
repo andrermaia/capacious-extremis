@@ -14,6 +14,7 @@ const STALE_MS = 6 * 60 * 60 * 1000;
 
 const input = readStdinJson();
 const root = projectRoot(input);
+if (!root) process.exit(0); // outside every project: only the universal rules apply
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
 const prompt = cleanPrompt(input.prompt);

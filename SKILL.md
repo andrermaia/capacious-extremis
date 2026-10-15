@@ -38,7 +38,7 @@ Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_f
 
 ## Enforcement via Claude Code Hooks
 
-`scripts/hooks/` ships four zero-dependency hooks wired in the project's `.claude/settings.json`:
+`scripts/hooks/` ships five zero-dependency hooks, installed in the **user** settings (`~/.claude/settings.json`) with absolute paths by `scripts/install-hooks.mjs`, so every Claude Code session on the machine runs them, in any folder. A session whose folder has no `.agents/skills/managing-system-context` above it (Temp, scratch folders, smoke tests) is outside every project: the hooks do nothing there and only the universal rules in `~/.claude/CLAUDE.md` apply. When `CONTEXT_API_TOKEN` is not in the environment (a session opened straight in `<root>/louza` does not load `<root>/.claude/settings.local.json`), the hooks read it from that file.
 
 | Hook | Event | Effect |
 |---|---|---|
@@ -70,18 +70,26 @@ node .agents/skills/managing-system-context/scripts/context-cli.mjs upsert --pro
 node .agents/skills/managing-system-context/scripts/sync-rules.mjs        # --dry-run shows what would change
 ```
 
-Install in another repository:
+## Install on a Workstation
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-prompt.mjs\"", "timeout": 30 }] }],
-    "PreToolUse": [{ "matcher": "Edit|Write|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-edit-guard.mjs\"" }] }],
-    "PostToolUse": [{ "matcher": "Bash|PowerShell", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-cli-call.mjs\"" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/on-stop.mjs\"" }] }]
-  }
-}
+```bash
+# hooks in ~/.claude/settings.json; drops the old project-level entries so nothing runs twice
+node <root>/.agents/skills/managing-system-context/scripts/install-hooks.mjs --project-settings <root>/.claude/settings.json
+# universal rules and protocol files
+node <root>/.agents/skills/managing-system-context/scripts/sync-rules.mjs
 ```
+
+The cloud setup (`cloud/install.mjs`) does the same inside a Claude Code on the web VM.
+
+## Memory: One Place per Kind of Fact
+
+- **Project facts** (decisions, behaviors, gotchas, status, debts) live in the shared base, which every agent on every machine reads. Do not write them to the Claude Code auto-memory.
+- **How agents must work** lives in the universal rules (project `global`, module `rules`).
+- **The auto-memory** keeps only pointers (servers, URLs, accounts) and the user's personal notes. On 2026-10-15 its 196 project facts moved to the base as `MEM-*` records (project `projetos`, full note in `details`).
+
+## Weekly Hygiene (`hygiene.mjs`)
+
+`scripts/hygiene.mjs` reads the whole base and reports knowledge `in_progress` untouched for 30+ days, tasks open for 7+ days, summaries not in English, near-duplicate summaries in a project, project facts written to a memory folder, and rules files that differ from the base. `--fix` closes the week-old tasks as `BLOCKED`; `--save` stores the report as `HYGIENE-REPORT` (project `global`, module `hygiene`). The session-start hook runs it with `--fix --save` in the background once a week and shows the summary while the report has findings. Fixing duplicates and summaries is an agent's job: `get HYGIENE-REPORT --project global` lists them.
 
 ## The Three-Stage Agent Protocol
 

@@ -7,13 +7,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, withLocalFallback,
-  saveModulesCache, stateFile, apiUrl, CLI, STAGE,
+  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, CLI, STAGE,
 } from './hook-lib.mjs';
 
 const SYNC_EVERY_MS = 10 * 60 * 1000;
+const HYGIENE_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
 const RECENT_MS = 48 * 60 * 60 * 1000;
 const BLOCKED_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -21,19 +21,22 @@ const input = readStdinJson();
 if (input.agent_id) process.exit(0);
 
 const root = projectRoot(input);
+if (!root) process.exit(0); // outside every project: only the universal rules apply
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
 const state = loadState(input.session_id);
 const read = (args) => runCliAsync(root, [...args, '--project', project, '--api-url', url], { timeoutMs: 8000 });
 
 refreshRules();
+runHygieneWeekly();
 
-const [modulesRaw, open, blocked, done, inProgress] = await Promise.all([
+const [modulesRaw, open, blocked, done, inProgress, hygiene] = await Promise.all([
   read(['list-modules']),
   read(['list-tasks', '--status', 'IN_PROGRESS', '--limit', '30']),
   read(['list-tasks', '--status', 'BLOCKED', '--limit', '10']),
   read(['list-tasks', '--status', 'DONE', '--limit', '30']),
   read(['query', '--phase', 'in_progress']),
+  runCliAsync(root, ['get', 'HYGIENE-REPORT', '--project', 'global', '--api-url', url], { timeoutMs: 8000 }),
 ]);
 const listing = withLocalFallback(root, ['list-modules', '--project', project], modulesRaw);
 const modules = listing.ok && Array.isArray(listing.data) ? listing.data : [];
@@ -69,6 +72,11 @@ if (pending.length) {
   sections.push('Itens em andamento na base:', ...pending.map((k) => `- ${k.id}${k.tasks_progress ? ` (${k.tasks_progress})` : ''} · ${cut(k.summary, 140)}`));
 }
 
+// The weekly hygiene report, while it still has findings.
+if (hygiene.ok && hygiene.data?.knowledge_type === 'technical_debt') {
+  sections.push('Faxina da base:', `- ${cut(hygiene.data.summary, 220)} (detalhes: ${CLI} get HYGIENE-REPORT --project global)`);
+}
+
 state.project = project;
 state.sessionContext = { at: new Date().toISOString(), source: input.source || 'startup' };
 saveState(input.session_id, state);
@@ -89,6 +97,19 @@ emit({
   hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
 });
 
+// Weekly, detached: closes week-old open tasks as BLOCKED and saves the report (HYGIENE-REPORT).
+function runHygieneWeekly() {
+  if (process.env.CONTEXT_SYNC_RULES === '0') return;
+  const stamp = path.join(path.dirname(stateFile('hygiene')), 'hygiene.stamp');
+  try {
+    if (Date.now() - fs.statSync(stamp).mtimeMs < HYGIENE_EVERY_MS) return;
+  } catch {}
+  try {
+    fs.writeFileSync(stamp, new Date().toISOString());
+    spawn(process.execPath, [scriptPath('hygiene.mjs'), '--fix', '--save', '--quiet'], { detached: true, stdio: 'ignore', windowsHide: true, env: cliEnv(root) }).unref();
+  } catch {}
+}
+
 // Keeps ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and friends in step with the rules in the
 // base. Detached, so the session never waits for it; throttled across sessions by a stamp file.
 function refreshRules() {
@@ -99,7 +120,6 @@ function refreshRules() {
   } catch {}
   try {
     fs.writeFileSync(stamp, new Date().toISOString());
-    const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'sync-rules.mjs');
-    spawn(process.execPath, [script, '--quiet'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawn(process.execPath, [scriptPath('sync-rules.mjs'), '--quiet'], { detached: true, stdio: 'ignore', windowsHide: true, env: cliEnv(root) }).unref();
   } catch {}
 }

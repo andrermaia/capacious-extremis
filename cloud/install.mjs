@@ -16,7 +16,7 @@ const MARK = 'managing-system-context';
 
 const hook = (script, extra = {}) => ({
   type: 'command',
-  command: `node "$CLAUDE_PROJECT_DIR/.agents/skills/managing-system-context/scripts/hooks/${script}"`,
+  command: `node "${path.join(skill, 'scripts', 'hooks', script)}"`,
   ...extra,
 });
 

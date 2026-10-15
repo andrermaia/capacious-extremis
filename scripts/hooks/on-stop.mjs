@@ -18,6 +18,7 @@ const upserts = state.turn?.upserts || 0;
 if (!open.length && !upserts) process.exit(0);
 
 const root = projectRoot(input);
+if (!root) process.exit(0); // outside every project: only the universal rules apply
 const fallbackProject = state.project || detectProject(input, root).project;
 const closed = [];
 const failed = [];
