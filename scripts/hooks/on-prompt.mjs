@@ -88,7 +88,8 @@ const moduleLine = modules.length
 const taskLine = taskId
   ? `Tarefa ${taskId} (módulo ${module}) aberta pelo hook; ele a fecha ao fim do turno.`
   : `⚠️ A tarefa NÃO foi aberta (${String(taskError).slice(0, 120)}). A base compartilhada parece fora do ar: avise o usuário; as edições ficam bloqueadas até ela voltar. Não use --no-api.`;
-const hits = found?.ok ? hitsBlock(found.data, words) : [];
+// This session's own tasks are what the agent is doing right now: never a hit.
+const hits = found?.ok ? hitsBlock(found.data, words, new Set((state.tasks || []).map((t) => t.id))) : [];
 
 // With the session context in place (protocol, modules) the prompt only needs the task
 // line and what the search found; otherwise (hooks installed mid-session, no session
