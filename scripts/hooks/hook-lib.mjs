@@ -278,7 +278,7 @@ export function protocolText(project) {
     `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
-    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","details":"<opcional>"}]',
+    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>"}]',
     '  EOF',
     `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
     'Subagentes ficam fora do protocolo: passe a eles o contexto e grave você o que descobrirem.',
@@ -308,19 +308,22 @@ export function searchWords(prompt) {
   return out;
 }
 
-// The few best hits of the automatic search, in a few hundred characters. A hit needs
-// two of the words when the prompt has three or more, so one common word does not flood it.
+// The few best hits of the automatic search, in a few hundred characters. The score
+// counts 3 per word found in the summary, id or Portuguese keywords and 1 per word found
+// only in the details: from three words up a hit needs 5 (two strong matches, or one
+// strong and two weak), so loose words in long notes do not flood the context.
 export function hitsBlock(data, words) {
-  const minHits = words.length >= 3 ? 2 : 1;
+  const minScore = words.length >= 3 ? 5 : 3;
+  const minTaskHits = Math.max(2, Math.ceil(words.length / 2));
   const cut = (s, n) => {
     const t = String(s || '').replace(/\s+/g, ' ').trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
   };
   const knowledge = (data?.knowledge || [])
     // Rules are already in CLAUDE.md; bootstrap-scan rows only list build files.
-    .filter((k) => k.hits >= minHits && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
+    .filter((k) => (k.score ?? 3 * k.hits) >= minScore && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
     .slice(0, 5);
-  const tasks = (data?.tasks || []).filter((t) => t.hits >= minHits && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
+  const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
   if (!knowledge.length && !tasks.length) return [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,

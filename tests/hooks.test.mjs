@@ -49,8 +49,13 @@ function fakeApi() {
           const rows = [
             { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'Boletim do louza: trimestre fecha pela media ponderada' },
             { id: 'RULE-BOLETIM', project_id: 'global', module: 'rules', summary: 'Boletim louza rule that must not show' },
+            { id: 'WEAK-1', project_id: 'louza', module: 'louza', summary: 'Unrelated note', details: 'corrija boletim louza' },
           ];
-          const knowledge = rows.map((r) => ({ ...r, hits: words.filter((w) => r.summary.toLowerCase().includes(w)).length })).filter((r) => r.hits);
+          const knowledge = rows.map((r) => {
+            const strong = words.filter((w) => r.summary.toLowerCase().includes(w)).length;
+            const weak = words.filter((w) => !r.summary.toLowerCase().includes(w) && String(r.details || '').includes(w)).length;
+            return { ...r, hits: strong + weak, score: 3 * strong + weak };
+          }).filter((r) => r.hits);
           return { query: words.join(' '), scope: 'all', knowledge, tasks: [] };
         },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
@@ -141,6 +146,8 @@ test('on-prompt opens the task itself, with the module the prompt mentions', asy
   assert.equal(api.routes('search')[0].query.q, 'corrija boletim louza');
   assert.match(ctx, /Da base[\s\S]*- louza\/LOUZA-BOLETIM-1 · Boletim do louza/);
   assert.doesNotMatch(ctx, /RULE-BOLETIM/);
+  // Three words found only in the details score 3 < 5: not shown.
+  assert.doesNotMatch(ctx, /WEAK-1/);
   assert.match(out.systemMessage, /🟢 Etapa 2\/3 · Tarefa · TASK-FAKE1-1/);
   assert.deepEqual(state('s1').tasks.map((t) => [t.id, t.finished]), [['TASK-FAKE1-1', false]]);
 });

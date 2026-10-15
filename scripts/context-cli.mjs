@@ -14,7 +14,7 @@ const DEFAULT_API_URL = 'https://api.takius.com.br/v1/context';
 const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks', 'search'];
 // Knowledge every project shares (universal agent rules live in its "rules" module).
 const GLOBAL_PROJECT = 'global';
-const WRITE_COMMANDS = ['upsert', 'task-start', 'task-step', 'task-finish'];
+const WRITE_COMMANDS = ['upsert', 'task-start', 'task-step', 'task-finish', 'keywords'];
 
 // Raised by the CLI itself (bad flags, oversized summary) — never a connectivity problem.
 class CliError extends Error {}
@@ -71,7 +71,25 @@ function upsertItems(options) {
     progress: r.progress || r.tasks_progress || null,
     summary: r.summary,
     details: r.details || null,
+    keywords: normalizeKeywords(r.keywords),
   }));
+}
+
+// Portuguese keywords next to the English summary: a list or "a, b" -> "a, b" (max 300).
+function normalizeKeywords(value) {
+  if (value == null || value === '' || value === true) return null;
+  const list = (Array.isArray(value) ? value : String(value).split(','))
+    .map((k) => String(k).trim().toLowerCase()).filter(Boolean);
+  return [...new Set(list)].join(', ').slice(0, 300) || null;
+}
+
+function readJsonInput(file, what) {
+  const raw = file === '-' || file === true ? fs.readFileSync(0, 'utf8') : fs.readFileSync(file, 'utf8');
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`${what}: invalid JSON (${err.message})`);
+  }
 }
 
 const VALID_TYPES = ['architecture_decision', 'system_model', 'current_behavior', 'future_revision', 'technical_debt'];
@@ -89,6 +107,16 @@ function checkUpsert(item) {
   if (item.phase !== 'in_progress') item.progress = null;
 }
 
+// `keywords --file <path|->`: [{ id, keywords }] (keywords: list or "a, b"); only the
+// keywords change, updated_at stays, so the hygiene report still sees stale work.
+function keywordItems(options) {
+  if (!options.file) throw new CliError('Usage: keywords --file <path|->  (JSON array of { id, keywords })');
+  const parsed = readJsonInput(options.file, 'keywords --file');
+  const list = (Array.isArray(parsed) ? parsed : [parsed]).map((r) => ({ id: r.id, keywords: normalizeKeywords(r.keywords) }));
+  if (!list.length || list.some((r) => !r.id)) throw new CliError('keywords --file: every item needs an id');
+  return list;
+}
+
 function searchScope(options, projectId) {
   if (options.all) return [];
   return [...new Set([projectId, GLOBAL_PROJECT])];
@@ -101,7 +129,7 @@ function searchLocal(db, terms, scope, limit) {
     let hits = 0;
     let score = 0;
     for (const t of terms) {
-      const top = has(r.summary, t) || has(r.id, t);
+      const top = has(r.summary, t) || has(r.id, t) || has(r.keywords, t);
       const mid = has(r.module, t) || has(r.feature, t);
       const low = has(r.details, t);
       if (top || mid || low) hits += 1;
@@ -154,6 +182,12 @@ function getDatabase(dbPath) {
 }
 
 function initializeDatabase(db, schemaPath = defaultSchemaPath) {
+  initializeTables(db, schemaPath);
+  const columns = db.prepare('PRAGMA table_info(system_knowledge)').all().map((c) => c.name);
+  if (!columns.includes('keywords')) db.exec('ALTER TABLE system_knowledge ADD COLUMN keywords TEXT DEFAULT NULL');
+}
+
+function initializeTables(db, schemaPath) {
   if (fs.existsSync(schemaPath)) {
     const ddl = fs.readFileSync(schemaPath, 'utf8');
     db.exec(ddl);
@@ -239,11 +273,11 @@ async function main() {
     try {
       cache.exec('DELETE FROM system_knowledge; DELETE FROM agent_tasks;');
       const insertKnowledge = cache.prepare(`
-        INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, keywords, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const r of data.system_knowledge) {
-        insertKnowledge.run(r.id, r.project_id, r.module, r.feature, r.knowledge_type, r.phase, r.tasks_progress, r.summary, r.details, r.updated_at);
+        insertKnowledge.run(r.id, r.project_id, r.module, r.feature, r.knowledge_type, r.phase, r.tasks_progress, r.summary, r.details, r.keywords ?? null, r.updated_at);
       }
       const insertTask = cache.prepare(`
         INSERT INTO agent_tasks (id, project_id, module, task_description, status, current_step, created_at, updated_at)
@@ -316,7 +350,7 @@ async function main() {
               method: 'POST',
               body: JSON.stringify({
                 id: item.id, project_id: projectId, module: item.module, feature: item.feature, knowledge_type: item.type,
-                phase: item.phase, tasks_progress: item.progress, summary: item.summary, details: item.details,
+                phase: item.phase, tasks_progress: item.progress, summary: item.summary, details: item.details, keywords: item.keywords,
               }),
             }, apiToken);
             results.push({ id: item.id, action: data.action });
@@ -339,7 +373,8 @@ async function main() {
           phase: options.phase,
           tasks_progress: options.progress || options.tasks_progress || null,
           summary,
-          details: options.details || null
+          details: options.details || null,
+          keywords: normalizeKeywords(options.keywords)
         };
 
         const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {
@@ -400,6 +435,19 @@ async function main() {
 
         const data = await requestApi(apiUrl, qs, {}, apiToken);
         console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      case 'keywords': {
+        const items = keywordItems(options);
+        const results = [];
+        for (let i = 0; i < items.length; i += 500) {
+          results.push(await requestApi(apiUrl, `keywords?project=${encodeURIComponent(projectId)}`, {
+            method: 'POST',
+            body: JSON.stringify({ items: items.slice(i, i + 500) }),
+          }, apiToken));
+        }
+        console.log(JSON.stringify({ status: 'ok', updated: results.reduce((a, r) => a + r.updated, 0), missing: results.flatMap((r) => r.missing) }, null, 2));
         return;
       }
 
@@ -513,15 +561,16 @@ async function main() {
       if (batch) {
         batch.forEach(checkUpsert);
         const stmt = db.prepare(`
-          INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, keywords, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             module = excluded.module, feature = excluded.feature, knowledge_type = excluded.knowledge_type,
             phase = excluded.phase, tasks_progress = excluded.tasks_progress, summary = excluded.summary,
-            details = COALESCE(excluded.details, system_knowledge.details), updated_at = excluded.updated_at
+            details = COALESCE(excluded.details, system_knowledge.details),
+            keywords = COALESCE(excluded.keywords, system_knowledge.keywords), updated_at = excluded.updated_at
         `);
         const now = new Date().toISOString();
-        for (const i of batch) stmt.run(i.id, projectId, i.module, i.feature, i.type, i.phase, i.progress, i.summary, i.details, now);
+        for (const i of batch) stmt.run(i.id, projectId, i.module, i.feature, i.type, i.phase, i.progress, i.summary, i.details, i.keywords, now);
         console.log(JSON.stringify({ status: 'ok', count: batch.length, results: batch.map((i) => ({ id: i.id, action: 'upserted' })) }, null, 2));
         break;
       }
@@ -555,9 +604,10 @@ async function main() {
       const now = new Date().toISOString();
 
       const stmt = db.prepare(`
-        INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, keywords, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          keywords = COALESCE(excluded.keywords, system_knowledge.keywords),
           module = excluded.module,
           feature = excluded.feature,
           knowledge_type = excluded.knowledge_type,
@@ -568,7 +618,7 @@ async function main() {
           updated_at = excluded.updated_at
       `);
 
-      stmt.run(id, projectId, module, feature, knowledgeType, phase, progress, summary, details, now);
+      stmt.run(id, projectId, module, feature, knowledgeType, phase, progress, summary, details, normalizeKeywords(options.keywords), now);
       console.log(JSON.stringify({ status: 'ok', id, action: 'upserted' }, null, 2));
       break;
     }
@@ -645,6 +695,20 @@ async function main() {
       break;
     }
 
+    case 'keywords': {
+      initializeDatabase(db);
+      const items = keywordItems(options);
+      const stmt = db.prepare('UPDATE system_knowledge SET keywords = ? WHERE id = ? AND project_id = ?');
+      const missing = [];
+      let updated = 0;
+      for (const i of items) {
+        const r = stmt.run(i.keywords, i.id, projectId);
+        if (r.changes) updated += r.changes; else missing.push(i.id);
+      }
+      console.log(JSON.stringify({ status: 'ok', updated, missing }, null, 2));
+      break;
+    }
+
     case 'search': {
       initializeDatabase(db);
       const terms = searchTerms(options.args.slice(1).join(' ') || options.q || '');
@@ -665,7 +729,8 @@ async function main() {
           'query --module <m> [--phase <p>] [--type <t>]',
           'get <id>',
           'upsert --id <id> --module <m> --feature <f> --type <t> --phase <p> [--progress <XX/YY>] --summary "<text>" [--details "<text>"]',
-          'upsert --file <path|->   (JSON array of {id, module, feature, type, phase, progress?, summary, details?}; - reads stdin)',
+          'upsert --file <path|->   (JSON array of {id, module, feature, type, phase, progress?, summary, details?, keywords?}; - reads stdin)',
+          'keywords --file <path|->   (JSON array of {id, keywords}: Portuguese keywords, updated_at unchanged)',
           'task-start --module <m> --desc "<description>"',
           'task-step --id <id> --step "<step>"',
           'task-finish --id <id> [--status DONE|BLOCKED]',

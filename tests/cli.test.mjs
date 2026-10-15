@@ -191,3 +191,22 @@ test('CLI: upsert --file - saves a whole batch from stdin in one call', () => {
   assert.throws(() => execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', 'upsert', '--file', '-'],
     { input: JSON.stringify(bad), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }));
 });
+
+test('CLI: Portuguese keywords make an English summary findable; keywords --file keeps updated_at', () => {
+  runCli(['init']);
+  const run = (args, input) => JSON.parse(execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', ...args],
+    { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }));
+  run(['upsert', '--file', '-'], JSON.stringify([
+    { id: 'K-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'Vacation days cut by phantom absences', keywords: ['Férias', 'faltas', 'férias'] },
+    { id: 'K-2', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'Quota mode distributes invites' },
+  ]));
+  assert.deepEqual(runCli(['search', 'ferias']).knowledge.map((r) => r.id), ['K-1']);
+  const before = runCli(['get', 'K-2']).updated_at;
+  const out = run(['keywords', '--file', '-'], JSON.stringify([{ id: 'K-2', keywords: 'cota, convites, recital' }, { id: 'NOPE', keywords: 'x' }]));
+  assert.deepEqual([out.updated, out.missing], [1, ['NOPE']]);
+  const after = runCli(['get', 'K-2']);
+  assert.equal(after.keywords, 'cota, convites, recital');
+  assert.equal(after.updated_at, before);
+  assert.equal(runCli(['search', 'recital']).knowledge[0].id, 'K-2');
+  assert.equal(runCli(['get', 'K-1']).keywords, 'férias, faltas');
+});
