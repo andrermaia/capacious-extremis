@@ -317,7 +317,8 @@ export function hitsBlock(data, words) {
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
   };
   const knowledge = (data?.knowledge || [])
-    .filter((k) => k.hits >= minHits && !['rules', 'hygiene'].includes(k.module))
+    // Rules are already in CLAUDE.md; bootstrap-scan rows only list build files.
+    .filter((k) => k.hits >= minHits && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
     .slice(0, 5);
   const tasks = (data?.tasks || []).filter((t) => t.hits >= minHits && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
   if (!knowledge.length && !tasks.length) return [];
