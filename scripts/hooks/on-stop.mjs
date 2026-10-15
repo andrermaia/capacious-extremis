@@ -2,23 +2,34 @@
 // Stop hook: closes the session's open tasks (DONE) by itself, saves the first
 // lines of the final answer as the latest task's result (current_step
 // "resultado: ..."), so the next session knows how it ended, and shows on screen
-// how much knowledge the turn saved. It never blocks the end of the turn: when
-// the API is unreachable the task stays open and the next prompt continues it.
+// how much knowledge the turn saved. What the agent did with the CLI (upserts, a
+// task closed by hand as BLOCKED) is read from the transcript here, so no hook runs
+// after every shell command. It never blocks the end of the turn: when the API is
+// unreachable the task stays open and the next prompt continues it.
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, apiUrl,
-  finalAnswer, outcomeLine, STAGE,
+  finalAnswer, outcomeLine, turnCliCalls, STAGE,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
 if (input.agent_id) process.exit(0);
 
-const state = loadState(input.session_id);
-const open = openTasks(state);
-const upserts = state.turn?.upserts || 0;
-if (!open.length && !upserts) process.exit(0);
-
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
+
+const state = loadState(input.session_id);
+const { upserts, finished } = turnCliCalls(input);
+// Tasks the agent closed itself (BLOCKED, or DONE by habit) keep their status.
+for (const f of finished) {
+  const task = (state.tasks || []).find((t) => t.id === f.id);
+  if (task) Object.assign(task, { finished: true, finishedBy: `agent (${f.status})` });
+}
+const open = openTasks(state);
+if (!open.length && !upserts) {
+  saveState(input.session_id, state);
+  process.exit(0);
+}
+
 const fallbackProject = state.project || detectProject(input, root).project;
 const closed = [];
 const failed = [];
@@ -44,7 +55,7 @@ for (const [i, task] of open.entries()) {
   }
 }
 
-state.turn = { ...(state.turn || {}), upserts: 0, reminded: false };
+state.turn = { ...(state.turn || {}), reminded: false };
 saveState(input.session_id, state);
 
 const saved = upserts ? `${upserts} conhecimento(s) gravado(s)` : 'nada gravado na base';

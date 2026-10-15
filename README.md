@@ -26,7 +26,6 @@ Modern AI agents often suffer from **context loss between sessions** or **token 
 │   └── hooks/               # Claude Code hooks that enforce the protocol on every prompt
 │       ├── on-prompt.mjs        # UserPromptSubmit: auto list-modules + protocol injection
 │       ├── on-edit-guard.mjs    # PreToolUse: deny Edit/Write until a task is open
-│       ├── on-cli-call.mjs      # PostToolUse: track task-start/finish, print stage on screen
 │       └── on-stop.mjs          # Stop: refuse to end the turn with an open task
 ├── tests/                   # Automated test suite using Node.js native test runner
 ├── .gitignore
@@ -80,7 +79,7 @@ Instructions in `CLAUDE.md` are advisory. To make the protocol mandatory, wire t
 - **SessionStart** injects, once per session and after each compaction, the module list, work in progress in other sessions, blocked tasks, the latest results and the knowledge items still in progress, and refreshes the universal rules files (`sync-rules`).
 - **UserPromptSubmit** runs `list-modules` for the project detected from `cwd` (remote API first, local SQLite as fallback), opens the task itself (`task-start`) and injects the module list, the task id and the protocol into the model context.
 - **PreToolUse** on `Edit|Write|NotebookEdit` reminds the main agent to `upsert` on the first edit of each turn and opens a task if none is open; it denies edits only when the API is unreachable. Subagents pass straight through.
-- **PostToolUse** on `Bash|PowerShell` tracks tasks closed by hand and the turn's upserts, and prints each stage on screen (`Etapa 1/3 · Contexto`, `Etapa 2/3 · Tarefa`, `Etapa 3/3 · Encerramento`).
+- There is no PostToolUse hook: the Stop hook reads the turn's CLI calls (upserts, tasks closed by hand) from the transcript.
 - **Stop** closes the open task (`DONE`) by itself; it never blocks the turn.
 
 `scripts/install-hooks.mjs` puts the hooks in the user settings, so they run in every folder (and do nothing outside a project); `scripts/hygiene.mjs` is the weekly clean-up report, triggered by the session-start hook. The agent's part is `query` (Stage 1), `search` when in doubt, and `upsert` (Stage 3). Universal agent rules live in the base (project `global`, module `rules`) and `scripts/sync-rules.mjs` writes them into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` and the project's `CLAUDE.md`/`AGENTS.md` (see `SKILL.md`). Subagents stay outside the protocol. Agents without hooks (Codex) still run `task-start` / `task-finish` by hand.

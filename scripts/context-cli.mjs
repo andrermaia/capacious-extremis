@@ -49,6 +49,46 @@ function searchTerms(q) {
   return [...new Set(terms)].slice(0, 8);
 }
 
+// `upsert --file <path|->`: a JSON array (or one object) of records, saved in one call
+// instead of one CLI call per record. "-" reads stdin, so a heredoc needs no temp file.
+function upsertItems(options) {
+  if (!options.file) return null;
+  const raw = options.file === '-' || options.file === true ? fs.readFileSync(0, 'utf8') : fs.readFileSync(options.file, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`upsert --file: invalid JSON (${err.message})`);
+  }
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  if (!list.length) throw new CliError('upsert --file: empty list');
+  return list.map((r) => ({
+    id: r.id,
+    module: r.module,
+    feature: r.feature,
+    type: r.type || r.knowledge_type,
+    phase: r.phase,
+    progress: r.progress || r.tasks_progress || null,
+    summary: r.summary,
+    details: r.details || null,
+  }));
+}
+
+const VALID_TYPES = ['architecture_decision', 'system_model', 'current_behavior', 'future_revision', 'technical_debt'];
+const VALID_PHASES = ['implemented', 'in_progress', 'queued', 'deprioritized'];
+
+function checkUpsert(item) {
+  if (!item.id || !item.module || !item.feature || !item.type || !item.phase || !item.summary) {
+    throw new CliError(`Missing required fields for upsert${item.id ? ` (${item.id})` : ''}: id, module, feature, type, phase, summary`);
+  }
+  if (item.summary.length > 250) {
+    throw new CliError(`Summary exceeds maximum limit of 250 characters (got ${item.summary.length}${item.id ? `, ${item.id}` : ''}). Please keep summaries concise in English to minimize token consumption.`);
+  }
+  if (!VALID_TYPES.includes(item.type)) throw new CliError(`Invalid knowledge_type "${item.type}". Must be one of: ${VALID_TYPES.join(', ')}`);
+  if (!VALID_PHASES.includes(item.phase)) throw new CliError(`Invalid phase "${item.phase}". Must be one of: ${VALID_PHASES.join(', ')}`);
+  if (item.phase !== 'in_progress') item.progress = null;
+}
+
 function searchScope(options, projectId) {
   if (options.all) return [];
   return [...new Set([projectId, GLOBAL_PROJECT])];
@@ -267,6 +307,23 @@ async function main() {
       }
 
       case 'upsert': {
+        const batch = upsertItems(options);
+        if (batch) {
+          batch.forEach(checkUpsert);
+          const results = [];
+          for (const item of batch) {
+            const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {
+              method: 'POST',
+              body: JSON.stringify({
+                id: item.id, project_id: projectId, module: item.module, feature: item.feature, knowledge_type: item.type,
+                phase: item.phase, tasks_progress: item.progress, summary: item.summary, details: item.details,
+              }),
+            }, apiToken);
+            results.push({ id: item.id, action: data.action });
+          }
+          console.log(JSON.stringify({ status: 'ok', count: results.length, results }, null, 2));
+          return;
+        }
         const id = options.id || options.args[1];
         const summary = options.summary;
         if (summary && summary.length > 250) {
@@ -452,6 +509,22 @@ async function main() {
 
     case 'upsert': {
       initializeDatabase(db);
+      const batch = upsertItems(options);
+      if (batch) {
+        batch.forEach(checkUpsert);
+        const stmt = db.prepare(`
+          INSERT INTO system_knowledge (id, project_id, module, feature, knowledge_type, phase, tasks_progress, summary, details, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            module = excluded.module, feature = excluded.feature, knowledge_type = excluded.knowledge_type,
+            phase = excluded.phase, tasks_progress = excluded.tasks_progress, summary = excluded.summary,
+            details = COALESCE(excluded.details, system_knowledge.details), updated_at = excluded.updated_at
+        `);
+        const now = new Date().toISOString();
+        for (const i of batch) stmt.run(i.id, projectId, i.module, i.feature, i.type, i.phase, i.progress, i.summary, i.details, now);
+        console.log(JSON.stringify({ status: 'ok', count: batch.length, results: batch.map((i) => ({ id: i.id, action: 'upserted' })) }, null, 2));
+        break;
+      }
       const id = options.id || options.args[1];
       const module = options.module;
       const feature = options.feature;
@@ -592,6 +665,7 @@ async function main() {
           'query --module <m> [--phase <p>] [--type <t>]',
           'get <id>',
           'upsert --id <id> --module <m> --feature <f> --type <t> --phase <p> [--progress <XX/YY>] --summary "<text>" [--details "<text>"]',
+          'upsert --file <path|->   (JSON array of {id, module, feature, type, phase, progress?, summary, details?}; - reads stdin)',
           'task-start --module <m> --desc "<description>"',
           'task-step --id <id> --step "<step>"',
           'task-finish --id <id> [--status DONE|BLOCKED]',

@@ -175,3 +175,19 @@ test('CLI: search ranks by words found, ignores accents, spans this project + gl
   assert.deepEqual(runCli(['search', 'migration', '--all']).knowledge.map((r) => r.id).sort(), ['A-1', 'O-1']);
   assert.throws(() => runCli(['search', 'x']));
 });
+
+test('CLI: upsert --file - saves a whole batch from stdin in one call', () => {
+  runCli(['init']);
+  const items = [
+    { id: 'B-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'First of the batch' },
+    { id: 'B-2', module: 'm', feature: 'f', type: 'technical_debt', phase: 'in_progress', progress: '01/03', summary: 'Second of the batch' },
+  ];
+  const out = execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', 'upsert', '--file', '-'],
+    { input: JSON.stringify(items), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  assert.deepEqual(JSON.parse(out).results.map((r) => r.id), ['B-1', 'B-2']);
+  const rows = runCli(['query', '--module', 'm']);
+  assert.deepEqual(rows.map((r) => [r.id, r.tasks_progress]).sort(), [['B-1', null], ['B-2', '01/03']]);
+  const bad = [{ ...items[0], id: 'B-3', summary: 'x'.repeat(251) }];
+  assert.throws(() => execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', 'upsert', '--file', '-'],
+    { input: JSON.stringify(bad), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }));
+});

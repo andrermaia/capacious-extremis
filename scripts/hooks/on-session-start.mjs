@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, withLocalFallback,
-  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, CLI, STAGE,
+  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, CLI,
 } from './hook-lib.mjs';
 
 const SYNC_EVERY_MS = 10 * 60 * 1000;
@@ -89,7 +89,7 @@ const context = [
   `Módulos: ${moduleLine}`,
   ...(sections.length ? ['', ...sections] : []),
   '',
-  `Em dúvida, procure antes de perguntar: ${CLI} search <palavras em inglês> --project ${project} (--all = todos os projetos). O hook de cada pedido abre a tarefa e traz o protocolo (${STAGE.CONTEXT}, ${STAGE.TASK}, ${STAGE.CLOSE}).`,
+  protocolText(project),
 ].join('\n');
 
 emit({

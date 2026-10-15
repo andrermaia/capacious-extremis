@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// UserPromptSubmit hook: loads the module list for the detected project, opens
-// the session task by itself (Stage 2), shows the step on screen and injects the
-// protocol into the model context. The agent only runs query (Stage 1) and
-// upsert (Stage 3); on-stop closes the task.
+// UserPromptSubmit hook: opens (or continues) the session task by itself, searches the
+// base with the words of the prompt and injects the best hits, so the agent rarely needs a
+// query turn of its own. With the session context in place it injects only that; without
+// it (no session-start hook), also the module list and the whole protocol.
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
   runCliAsync, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
-  guessModule, apiUrl, CLI, STAGE,
+  guessModule, searchWords, hitsBlock, protocolText, apiUrl, STAGE,
 } from './hook-lib.mjs';
 
 // A task left open longer than this belongs to an old turn (resumed session): close it.
@@ -47,7 +47,14 @@ if (current) {
   taskRun = runCliAsync(root, ['task-start', '--project', project, '--module', module, '--desc', prompt || 'pedido sem texto', '--api-url', url], { timeoutMs: 8000 });
 }
 
-const [listed, task] = await Promise.all([listing, taskRun, ...closing]);
+// The agent's first move used to be a query/search turn that re-read the whole context:
+// the hook searches the base with the prompt's words instead, in parallel.
+const words = searchWords(prompt);
+const searching = words.length
+  ? runCliAsync(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
+  : null;
+
+const [listed, task, found] = await Promise.all([listing, taskRun, searching, ...closing]);
 const result = primed
   ? { ok: true, data: cached, source: task.ok ? 'api' : state.source || 'local', apiUrl: url, apiError: task.ok ? null : task.error }
   : withLocalFallback(root, listArgs, listed);
@@ -74,27 +81,24 @@ saveState(input.session_id, state);
 const moduleLine = modules.length
   ? modules.map((m) => `${m.module} (${m.total_count})`).join(', ')
   : '(nenhum módulo cadastrado — rode bootstrap-scan ou init)';
-const p = `--project ${project}`;
 
 const taskLine = taskId
-  ? `- "${STAGE.TASK}": já aberta pelo hook — ${taskId} (módulo ${module}). Não rode task-start nem task-finish. Opcional em operação longa: ${CLI} task-step ${p} --id ${taskId} --step "<passo>"`
-  : `- "${STAGE.TASK}": ⚠️ a tarefa NÃO foi aberta (${String(taskError).slice(0, 120)}). A base compartilhada parece fora do ar: avise o usuário; as edições ficam bloqueadas até ela voltar. Não use --no-api.`;
+  ? `Tarefa ${taskId} (módulo ${module}) aberta pelo hook; ele a fecha ao fim do turno.`
+  : `⚠️ A tarefa NÃO foi aberta (${String(taskError).slice(0, 120)}). A base compartilhada parece fora do ar: avise o usuário; as edições ficam bloqueadas até ela voltar. Não use --no-api.`;
+const hits = found?.ok ? hitsBlock(found.data, words) : [];
 
+// With the session context in place (protocol, modules) the prompt only needs the task
+// line and what the search found; otherwise (hooks installed mid-session, no session
+// start) it carries the whole protocol, as before.
 const context = [
-  `[managing-system-context] Projeto ${project} (pasta ${folder}) · fonte ${result.source === 'api' ? `API ${result.apiUrl}` : 'cache local .agents/context.db (somente leitura)'}${result.apiError ? ` — API indisponível: ${String(result.apiError).slice(0, 120)}` : ''}.`,
-  ...(primed ? [] : [`Módulos: ${moduleLine}`]),
-  '',
-  'PROTOCOLO (anuncie em texto cada etapa, com estes rótulos, antes de executá-la):',
-  `- "${STAGE.CONTEXT}": ${CLI} query ${p} --module <módulo>   (a lista de módulos ${primed ? 'veio no início da sessão' : 'acima'} dispensa list-modules; a sintaxe aqui dispensa --help). Em dúvida: ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos)`,
-  taskLine,
-  `- "${STAGE.CLOSE}": se surgiu decisão, modelo ou débito, grave antes da resposta final: ${CLI} upsert ${p} --id <ID> --module <m> --feature <f> --type architecture_decision|system_model|current_behavior|future_revision|technical_debt --phase implemented|in_progress|queued|deprioritized [--progress XX/YY, obrigatório em in_progress] --summary "<inglês, até 250 caracteres>" [--details "<texto>"]. O hook fecha a tarefa (DONE) ao fim do turno; só se ela ficou bloqueada rode task-finish ${p} --id ${taskId || '<TASK_ID>'} --status BLOCKED.`,
-  'Subagentes ficam fora do protocolo: não peça context-cli a eles; passe no prompt o contexto de que precisarem e grave você o que eles descobrirem.',
-  `Se o projeto detectado estiver errado, use outro --project (disponíveis: louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews) ${sourceFlags(result.source)}.`,
+  `[managing-system-context] Projeto ${project} (pasta ${folder}) · ${taskLine}${result.apiError && taskId ? ` API instável: ${String(result.apiError).slice(0, 80)}` : ''}`,
+  ...hits,
+  ...(primed ? [] : ['', `Fonte: ${result.source === 'api' ? `API ${result.apiUrl}` : 'cache local (somente leitura)'} ${sourceFlags(result.source)}`, `Módulos: ${moduleLine}`, '', protocolText(project)]),
 ].join('\n');
 
 emit({
-  systemMessage: `📚 ${STAGE.CONTEXT} · projeto ${project} · ${modules.length} módulo(s) · fonte ${result.source === 'api' ? 'API' : 'local'} · ` +
-    (taskId ? `🟢 ${taskId}${current ? ' (continuação)' : ''}` : '⚠️ tarefa não aberta'),
+  systemMessage: `📚 ${STAGE.CONTEXT} · projeto ${project}${hits.length ? ` · ${hits.length - 1} item(ns) da base` : ''} · ` +
+    (taskId ? `🟢 ${STAGE.TASK} · ${taskId}${current ? ' (continuação)' : ''}` : '⚠️ tarefa não aberta'),
   hookSpecificOutput: {
     hookEventName: 'UserPromptSubmit',
     additionalContext: context,

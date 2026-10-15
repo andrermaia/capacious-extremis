@@ -181,27 +181,68 @@ export function guessModule(prompt, modules) {
 
 // The text of the turn's final answer: the Stop input when Claude Code sends it, else
 // the last assistant text in the tail of the transcript (after the last user prompt).
-export function finalAnswer(input) {
-  if (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) return input.last_assistant_message;
-  const file = input.transcript_path;
-  if (!file) return null;
-  let tail;
+// The last records of the transcript (parsed JSON lines), newest last.
+function readTail(file, bytes = 1024 * 1024) {
+  if (!file) return [];
   try {
     const fd = fs.openSync(file, 'r');
     const size = fs.fstatSync(fd).size;
-    const length = Math.min(size, 512 * 1024);
+    const length = Math.min(size, bytes);
     const buf = Buffer.alloc(length);
     fs.readSync(fd, buf, 0, length, size - length);
     fs.closeSync(fd);
-    tail = buf.toString('utf8').split('\n');
+    return buf.toString('utf8').split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   } catch {
-    return null;
+    return [];
   }
+}
+
+const isPrompt = (rec) => rec.type === 'user' && typeof rec.message?.content === 'string' && !rec.isMeta;
+
+// What the agent did with the CLI in this turn (since the last user prompt): how many
+// knowledge rows it saved and which tasks it closed by hand. Read from the transcript at
+// Stop time, so no hook has to run after every shell command.
+export function turnCliCalls(input) {
+  const tail = readTail(input.transcript_path);
+  let start = 0;
+  for (let i = tail.length - 1; i >= 0; i--) if (isPrompt(tail[i])) { start = i + 1; break; }
+  const commands = new Map();
+  const results = new Map();
+  for (const rec of tail.slice(start)) {
+    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) {
+      if (b?.type === 'tool_use' && ['Bash', 'PowerShell'].includes(b.name) && String(b.input?.command || '').includes('context-cli')) {
+        commands.set(b.id, String(b.input.command));
+      } else if (b?.type === 'tool_result' && commands.has(b.tool_use_id)) {
+        const c = b.content;
+        results.set(b.tool_use_id, typeof c === 'string' ? c : JSON.stringify(c ?? ''));
+      }
+    }
+  }
+  let upserts = 0;
+  const finished = [];
+  for (const [id, command] of commands) {
+    const bare = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
+    const out = results.get(id) || '';
+    if (/\bupsert\b/.test(bare)) {
+      upserts += (out.match(/\\?"action\\?"\s*:\s*\\?"(inserted|updated|upserted)/g) || []).length || (bare.match(/\bupsert\b/g) || []).length;
+    }
+    if (/\btask-finish\b/.test(bare)) {
+      for (const m of command.matchAll(/task-finish\b[^\n]*?--id\s+["']?(TASK-[A-Z0-9]+-\d+)[^\n]*?(?:--status\s+["']?([A-Z]+))?/g)) {
+        finished.push({ id: m[1], status: m[2] || 'DONE' });
+      }
+    }
+  }
+  return { upserts, finished };
+}
+
+export function finalAnswer(input) {
+  if (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) return input.last_assistant_message;
+  const tail = readTail(input.transcript_path, 512 * 1024);
+  if (!tail.length) return null;
   for (let i = tail.length - 1; i >= 0; i--) {
-    let rec;
-    try { rec = JSON.parse(tail[i]); } catch { continue; }
+    const rec = tail[i];
     const content = rec.message?.content;
-    if (rec.type === 'user' && typeof content === 'string' && !rec.isMeta) return null;
+    if (isPrompt(rec)) return null;
     if (rec.type !== 'assistant' || !Array.isArray(content)) continue;
     const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
     if (text) return text;
@@ -226,8 +267,69 @@ export function outcomeLine(text, max = 230) {
   return `${plain.slice(0, cutAt > max * 0.6 ? cutAt : max - 1)}…`;
 }
 
+export const PROJECTS = 'louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews, projetos';
+
+// The whole protocol, sent once per session (session start, and again after compaction).
+// The stages show on screen through the hooks' messages, so the agent does not narrate them.
+export function protocolText(project) {
+  const p = `--project ${project}`;
+  return [
+    'PROTOCOLO (as etapas aparecem na tela pelos hooks; não as narre):',
+    `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
+    '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
+    `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
+    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","details":"<opcional>"}]',
+    '  EOF',
+    `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
+    'Subagentes ficam fora do protocolo: passe a eles o contexto e grave você o que descobrirem.',
+    `Projetos (--project): ${PROJECTS}. A API compartilhada é o padrão do CLI: não passe --api-url nem --no-api.`,
+  ].join('\n');
+}
+
+// Words of the prompt worth searching: no stop words, no short noise, at most 8.
+const STOP_WORDS = new Set(('a o as os um uma uns umas de do da dos das em no na nos nas por para pra com sem que se e ou mas como ' +
+  'mais menos muito pouco ja já nao não sim isso isto esse essa este esta aquele aquela ele ela eles elas eu voce você voces vocês ' +
+  'me te nos lhe meu minha seu sua nosso nossa ao aos pelo pela pelos pelas qual quais quando onde porque porquê quem ' +
+  'ser estar ter fazer faca faça pode posso preciso quero queria gostaria favor por-favor agora hoje tambem também ainda ' +
+  'the and for with from that this what how why when where can could should would please make have has').split(' '));
+
+export function searchWords(prompt) {
+  const words = String(prompt || '').toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_.-]*/gu) || [];
+  const seen = new Set();
+  const out = [];
+  for (const w of words) {
+    const clean = w.replace(/[.-]+$/, '');
+    if (clean.length < 4 && !/\d/.test(clean)) continue;
+    if (STOP_WORDS.has(clean) || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+    if (out.length === 8) break;
+  }
+  return out;
+}
+
+// The few best hits of the automatic search, in a few hundred characters. A hit needs
+// two of the words when the prompt has three or more, so one common word does not flood it.
+export function hitsBlock(data, words) {
+  const minHits = words.length >= 3 ? 2 : 1;
+  const cut = (s, n) => {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+  };
+  const knowledge = (data?.knowledge || [])
+    .filter((k) => k.hits >= minHits && !['rules', 'hygiene'].includes(k.module))
+    .slice(0, 5);
+  const tasks = (data?.tasks || []).filter((t) => t.hits >= minHits && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
+  if (!knowledge.length && !tasks.length) return [];
+  return [
+    `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
+    ...knowledge.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`),
+    ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
+  ];
+}
+
 export function upsertReminder(taskId) {
-  return `Lembrete da ${STAGE.CLOSE}: antes da resposta final, grave com upsert o que este trabalho decidiu ou revelou ` +
+  return `Lembrete da ${STAGE.CLOSE}: antes da resposta final, grave numa chamada só (upsert --file -) o que este trabalho decidiu ou revelou ` +
     `(decisão, modelo, débito; summary em inglês, até 250 caracteres). ${taskId ? `A ${taskId} fecha sozinha` : 'A tarefa fecha sozinha'} ao fim do turno.`;
 }
 

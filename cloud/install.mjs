@@ -29,13 +29,17 @@ const wanted = {
   }],
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
   PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
-  PostToolUse: [{ matcher: 'Bash', hooks: [hook('on-cli-call.mjs', { timeout: 10 })] }],
   Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
 };
 
 let settings = {};
 try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* new file */ }
 settings.hooks ||= {};
+// on-cli-call.mjs is gone (its counting moved to on-stop): drop a leftover PostToolUse entry.
+if (settings.hooks.PostToolUse) {
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter((g) => !(g.hooks || []).some((h) => String(h.command || '').includes(MARK)));
+  if (!settings.hooks.PostToolUse.length) delete settings.hooks.PostToolUse;
+}
 for (const [event, groups] of Object.entries(wanted)) {
   const kept = (settings.hooks[event] || []).filter(
     (g) => !(g.hooks || []).some((h) => String(h.command || '').includes(MARK)),

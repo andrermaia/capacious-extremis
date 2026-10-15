@@ -23,6 +23,7 @@ test('hooks go to the user settings with absolute paths; old project entries lea
   const user = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(user.permissions, { allow: ['Bash(ls:*)'] });
   assert.deepEqual(Object.keys(WANTED).every((e) => user.hooks[e]), true);
+  assert.equal(user.hooks.PostToolUse, undefined);
   assert.equal(user.hooks.Stop.length, 2);
   assert.equal(user.hooks.Stop[0].hooks[0].command, 'echo other');
   assert.match(user.hooks.Stop[1].hooks[0].command, /^node ".*\/scripts\/hooks\/on-stop\.mjs"$/);

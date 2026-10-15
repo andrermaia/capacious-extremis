@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Registers the protocol hooks in the USER settings (~/.claude/settings.json) with absolute
+// Registers the four protocol hooks in the USER settings (~/.claude/settings.json) with absolute
 // paths to this skill, so every Claude Code session on the machine runs them, in any folder.
 // Outside a folder that holds the skill the hooks do nothing (only the universal rules in
 // ~/.claude/CLAUDE.md apply). Idempotent: entries already pointing at this skill are
@@ -20,7 +20,6 @@ export const WANTED = {
   SessionStart: [{ hooks: [hook('on-session-start.mjs', { timeout: 30, statusMessage: 'Contexto da sessão · carregando do Takius' })] }],
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
   PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
-  PostToolUse: [{ matcher: 'Bash|PowerShell', hooks: [hook('on-cli-call.mjs', { timeout: 10 })] }],
   Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
 };
 

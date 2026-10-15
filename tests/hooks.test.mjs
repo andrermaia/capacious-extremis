@@ -44,6 +44,15 @@ function fakeApi() {
         query: () => (url.searchParams.get('phase') === 'in_progress'
           ? [{ id: 'LOUZA-WIP-1', module: 'louza', phase: 'in_progress', tasks_progress: '02/05', summary: 'Rematricula 2027 half done' }] : []),
         upsert: () => ({ status: 'ok', id: json.id, action: 'inserted' }),
+        search: () => {
+          const words = String(url.searchParams.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
+          const rows = [
+            { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'Boletim do louza: trimestre fecha pela media ponderada' },
+            { id: 'RULE-BOLETIM', project_id: 'global', module: 'rules', summary: 'Boletim louza rule that must not show' },
+          ];
+          const knowledge = rows.map((r) => ({ ...r, hits: words.filter((w) => r.summary.toLowerCase().includes(w)).length })).filter((r) => r.hits);
+          return { query: words.join(' '), scope: 'all', knowledge, tasks: [] };
+        },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(reply ? reply() : { error: 'not found' }));
@@ -99,7 +108,19 @@ test.afterEach(() => { api.close(); fs.rmSync(ws.base, { recursive: true, force:
 const prompt = (sid, text) => runHook(ws, api, 'on-prompt.mjs', { session_id: sid, hook_event_name: 'UserPromptSubmit', prompt: text, prompt_id: 'p1' });
 const edit = (sid, extra = {}) => runHook(ws, api, 'on-edit-guard.mjs', { session_id: sid, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(ws.root, 'louza', 'x.ts'), content: 'x' }, ...extra });
 const stop = (sid) => runHook(ws, api, 'on-stop.mjs', { session_id: sid, hook_event_name: 'Stop', stop_hook_active: false });
-const cli = (sid, command, stdout) => runHook(ws, api, 'on-cli-call.mjs', { session_id: sid, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: { stdout, stderr: '' } });
+// A transcript of one turn: the prompt, then Bash calls with their outputs.
+function transcript(name, calls, before = []) {
+  const lines = [...before, { type: 'user', message: { role: 'user', content: 'pedido' } }];
+  calls.forEach(([command, output], i) => {
+    lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command } }] } });
+    lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: output }] } });
+  });
+  lines.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'Feito.' }] } });
+  const file = path.join(ws.base, `${name}.jsonl`);
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return file;
+}
+const stopWith = (sid, file) => runHook(ws, api, 'on-stop.mjs', { session_id: sid, hook_event_name: 'Stop', transcript_path: file });
 const state = (sid) => JSON.parse(fs.readFileSync(ws.stateFile(sid), 'utf8'));
 
 test('on-prompt opens the task itself, with the module the prompt mentions', async () => {
@@ -109,11 +130,18 @@ test('on-prompt opens the task itself, with the module the prompt mentions', asy
   assert.equal(start.body.module, 'louza');
   assert.equal(start.body.desc, 'Corrija o boletim do louza');
   const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /já aberta pelo hook — TASK-FAKE1-1 \(módulo louza\)/);
-  assert.match(ctx, /Não rode task-start nem task-finish/);
-  assert.match(ctx, /--type architecture_decision\|system_model/);
+  assert.match(ctx, /Tarefa TASK-FAKE1-1 \(módulo louza\) aberta pelo hook/);
+  // No session start in this session: the prompt carries the whole protocol, without narration.
+  assert.match(ctx, /não rode task-start nem task-finish/);
+  assert.match(ctx, /"type":"architecture_decision\|system_model/);
+  assert.match(ctx, /upsert --project projetos --file -/);
   assert.match(ctx, /Subagentes ficam fora do protocolo/);
-  assert.match(out.systemMessage, /🟢 TASK-FAKE1-1/);
+  assert.doesNotMatch(ctx, /anuncie/i);
+  // The hook searched the base with the prompt's words and shows the hit, never a rule.
+  assert.equal(api.routes('search')[0].query.q, 'corrija boletim louza');
+  assert.match(ctx, /Da base[\s\S]*- louza\/LOUZA-BOLETIM-1 · Boletim do louza/);
+  assert.doesNotMatch(ctx, /RULE-BOLETIM/);
+  assert.match(out.systemMessage, /🟢 Etapa 2\/3 · Tarefa · TASK-FAKE1-1/);
   assert.deepEqual(state('s1').tasks.map((t) => [t.id, t.finished]), [['TASK-FAKE1-1', false]]);
 });
 
@@ -136,7 +164,7 @@ test('a task left open by an old turn is closed as BLOCKED and a new one opens',
 test('the first edit of a turn carries the upsert reminder, the next ones pass silently', async () => {
   await prompt('s4', 'pedido');
   const first = await edit('s4');
-  assert.match(first.hookSpecificOutput.additionalContext, /grave com upsert/);
+  assert.match(first.hookSpecificOutput.additionalContext, /grave numa chamada só \(upsert --file -\)/);
   assert.equal(first.hookSpecificOutput.permissionDecision, undefined);
   assert.equal(await edit('s4'), null);
 });
@@ -155,21 +183,26 @@ test('on-stop closes the task by itself and never blocks the turn', async () => 
   assert.equal(state('s6').tasks[0].finished, true);
 });
 
-test('upserts are counted, and a summary that mentions task-finish closes nothing', async () => {
+test('on-stop counts the turn\'s upserts from the transcript; a summary naming task-finish closes nothing', async () => {
   await prompt('s7', 'pedido');
-  const cmd = 'node .agents/skills/managing-system-context/scripts/context-cli.mjs upsert --project projetos --id DEBT-X --module m --feature f --type technical_debt --phase queued --summary "move task-finish --id TASK-FAKE1-1 to on-stop"';
-  const out = await cli('s7', cmd, '{"status":"ok","id":"DEBT-X","action":"inserted"}');
-  assert.match(out.systemMessage, /conhecimento DEBT-X gravado/);
-  assert.doesNotMatch(out.systemMessage, /encerrada/);
-  assert.equal(state('s7').tasks[0].finished, false);
-  assert.match((await stop('s7')).systemMessage, /1 conhecimento\(s\) gravado\(s\)/);
+  const file = transcript('s7', [
+    ['node context-cli.mjs upsert --project projetos --file - <<EOF\n[{"id":"A","summary":"move task-finish --id TASK-FAKE1-1 to on-stop"},{"id":"B"}]\nEOF',
+      '{"status":"ok","count":2,"results":[{"id":"A","action":"inserted"},{"id":"B","action":"updated"}]}'],
+  ], [
+    // An upsert from the previous turn does not count in this one.
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'old', name: 'Bash', input: { command: 'node context-cli.mjs upsert --id OLD' } }] } },
+  ]);
+  const out = await stopWith('s7', file);
+  assert.match(out.systemMessage, /TASK-FAKE1-1 fechada\(s\) · 2 conhecimento\(s\) gravado\(s\)/);
+  assert.deepEqual(api.routes('tasks/finish').map((c) => [c.body.id, c.body.status]), [['TASK-FAKE1-1', 'DONE']]);
 });
 
-test('one shell command with several CLI calls closes every task it names', async () => {
-  await cli('s8', 'node context-cli.mjs task-start --project projetos --module a --desc "x"', '{"id":"TASK-A-1"}');
-  await cli('s8', 'node context-cli.mjs task-start --project projetos --module b --desc "y"', '{"id":"TASK-B-2"}');
-  await cli('s8', 'node context-cli.mjs task-finish --project projetos --id TASK-A-1 && node context-cli.mjs task-finish --project projetos --id TASK-B-2', '{}');
-  assert.ok(state('s8').tasks.every((t) => t.finished));
+test('a task the agent closed by hand as BLOCKED keeps that status', async () => {
+  await prompt('s8', 'pedido');
+  const file = transcript('s8', [['node context-cli.mjs task-finish --project projetos --id TASK-FAKE1-1 --status BLOCKED', '{"status":"ok"}']]);
+  await stopWith('s8', file);
+  assert.equal(api.routes('tasks/finish').length, 0);
+  assert.equal(state('s8').tasks[0].finished, true);
 });
 
 test('editing after the turn closed opens a new task instead of denying', async () => {
@@ -184,7 +217,7 @@ test('editing after the turn closed opens a new task instead of denying', async 
 test('with the API down the prompt says so and edits are denied', async () => {
   api.setDown(true);
   const out = await prompt('s10', 'pedido');
-  assert.match(out.hookSpecificOutput.additionalContext, /a tarefa NÃO foi aberta/);
+  assert.match(out.hookSpecificOutput.additionalContext, /A tarefa NÃO foi aberta/);
   const denied = await edit('s10');
   assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(denied.hookSpecificOutput.permissionDecisionReason, /fora do ar/);
@@ -206,6 +239,7 @@ test('session start brings modules, other sessions\' work, recent results and in
   assert.match(ctx, /Em andamento em outras sessões[\s\S]*TASK-FAKE1-1 · louza · .* · ajustar o boletim do louza/);
   assert.match(ctx, /Resultados recentes:\n- .* · corrigir a rematrícula → Feito Corrigi a rematrícula de 2027: três contratos voltaram ao convênio\./);
   assert.match(ctx, /LOUZA-WIP-1 \(02\/05\) · Rematricula 2027 half done/);
+  assert.match(ctx, /PROTOCOLO \(as etapas aparecem na tela pelos hooks; não as narre\)/);
   assert.match(ctx, /search <palavras em inglês>/);
   assert.ok(state('s11').sessionContext);
 });
@@ -216,7 +250,9 @@ test('after session start the prompt hook skips the module list and the list-mod
   const out = await prompt('s12', 'pedido do louza');
   assert.equal(api.routes('modules').length, before);
   assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /Módulos:/);
-  assert.match(out.hookSpecificOutput.additionalContext, /veio no início da sessão/);
+  // The protocol came once with the session: the prompt carries only the task line (and hits).
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /PROTOCOLO/);
+  assert.match(out.hookSpecificOutput.additionalContext, /Tarefa TASK-FAKE\d-\d \(módulo louza\) aberta pelo hook/);
   assert.equal(api.routes('tasks/start').at(-1).body.module, 'louza');
 });
 
