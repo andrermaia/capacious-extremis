@@ -19,8 +19,12 @@ const url = apiUrl();
 const prompt = cleanPrompt(input.prompt);
 const state = loadState(input.session_id);
 
+// The session-start hook already showed the module list: then the prompt hook skips it
+// (and the list-modules call) and uses the cached list to pick the task module.
+const cached = loadModulesCache(project);
+const primed = Boolean(state.sessionContext) && Array.isArray(cached);
 const listArgs = ['list-modules', '--project', project];
-const listing = runCliAsync(root, [...listArgs, '--api-url', url], { timeoutMs: 8000 });
+const listing = primed ? null : runCliAsync(root, [...listArgs, '--api-url', url], { timeoutMs: 8000 });
 
 // An interrupted turn or a queued prompt leaves the task open: the new prompt continues it.
 const open = openTasks(state);
@@ -37,15 +41,17 @@ if (current) {
   taskRun = runCliAsync(root, ['task-step', '--project', project, '--id', current.id, '--step', `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
 } else {
   // First prompt ever for this project: wait for the module list to pick the module.
-  const known = loadModulesCache(project) || (await listing).data;
+  const known = cached || (await listing).data;
   module = guessModule(prompt, Array.isArray(known) ? known : []);
   taskRun = runCliAsync(root, ['task-start', '--project', project, '--module', module, '--desc', prompt || 'pedido sem texto', '--api-url', url], { timeoutMs: 8000 });
 }
 
 const [listed, task] = await Promise.all([listing, taskRun, ...closing]);
-const result = withLocalFallback(root, listArgs, listed);
+const result = primed
+  ? { ok: true, data: cached, source: task.ok ? 'api' : state.source || 'local', apiUrl: url, apiError: task.ok ? null : task.error }
+  : withLocalFallback(root, listArgs, listed);
 const modules = result.ok && Array.isArray(result.data) ? result.data : [];
-if (result.source === 'api' && modules.length) saveModulesCache(project, modules);
+if (!primed && result.source === 'api' && modules.length) saveModulesCache(project, modules);
 
 let taskId = current?.id;
 let taskError = null;
@@ -75,10 +81,10 @@ const taskLine = taskId
 
 const context = [
   `[managing-system-context] Projeto ${project} (pasta ${folder}) · fonte ${result.source === 'api' ? `API ${result.apiUrl}` : 'cache local .agents/context.db (somente leitura)'}${result.apiError ? ` — API indisponível: ${String(result.apiError).slice(0, 120)}` : ''}.`,
-  `Módulos: ${moduleLine}`,
+  ...(primed ? [] : [`Módulos: ${moduleLine}`]),
   '',
   'PROTOCOLO (anuncie em texto cada etapa, com estes rótulos, antes de executá-la):',
-  `- "${STAGE.CONTEXT}": ${CLI} query ${p} --module <módulo>   (a lista acima dispensa list-modules; a sintaxe aqui dispensa --help)`,
+  `- "${STAGE.CONTEXT}": ${CLI} query ${p} --module <módulo>   (a lista de módulos ${primed ? 'veio no início da sessão' : 'acima'} dispensa list-modules; a sintaxe aqui dispensa --help). Em dúvida: ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos)`,
   taskLine,
   `- "${STAGE.CLOSE}": se surgiu decisão, modelo ou débito, grave antes da resposta final: ${CLI} upsert ${p} --id <ID> --module <m> --feature <f> --type architecture_decision|system_model|current_behavior|future_revision|technical_debt --phase implemented|in_progress|queued|deprioritized [--progress XX/YY, obrigatório em in_progress] --summary "<inglês, até 250 caracteres>" [--details "<texto>"]. O hook fecha a tarefa (DONE) ao fim do turno; só se ela ficou bloqueada rode task-finish ${p} --id ${taskId || '<TASK_ID>'} --status BLOCKED.`,
   'Subagentes ficam fora do protocolo: não peça context-cli a eles; passe no prompt o contexto de que precisarem e grave você o que eles descobrirem.',

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Stop hook: closes the session's open tasks (DONE) by itself and shows on
-// screen how much knowledge the turn saved. It never blocks the end of the
-// turn: when the API is unreachable the task stays open and the next prompt
-// hook carries it on.
+// Stop hook: closes the session's open tasks (DONE) by itself, saves the first
+// lines of the final answer as the latest task's result (current_step
+// "resultado: ..."), so the next session knows how it ended, and shows on screen
+// how much knowledge the turn saved. It never blocks the end of the turn: when
+// the API is unreachable the task stays open and the next prompt continues it.
 import {
-  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, apiUrl, STAGE,
+  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, apiUrl,
+  finalAnswer, outcomeLine, STAGE,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
@@ -19,8 +21,17 @@ const root = projectRoot(input);
 const fallbackProject = state.project || detectProject(input, root).project;
 const closed = [];
 const failed = [];
-const results = await Promise.all(open.map((task) =>
-  runCliAsync(root, ['task-finish', '--project', task.project || fallbackProject, '--id', task.id, '--status', 'DONE', '--api-url', apiUrl()], { timeoutMs: 7000 })));
+const projectOf = (task) => task.project || fallbackProject;
+const outcome = open.length ? outcomeLine(finalAnswer(input)) : null;
+const latest = [...open].sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt))).at(-1);
+const saving = outcome
+  ? runCliAsync(root, ['task-step', '--project', projectOf(latest), '--id', latest.id, '--step', `resultado: ${outcome}`, '--api-url', apiUrl()], { timeoutMs: 7000 })
+  : null;
+const [results] = await Promise.all([
+  Promise.all(open.map((task) =>
+    runCliAsync(root, ['task-finish', '--project', projectOf(task), '--id', task.id, '--status', 'DONE', '--api-url', apiUrl()], { timeoutMs: 7000 }))),
+  saving,
+]);
 for (const [i, task] of open.entries()) {
   const r = results[i];
   if (r.ok) {

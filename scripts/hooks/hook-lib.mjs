@@ -158,6 +158,53 @@ export function guessModule(prompt, modules) {
   return names.find((n) => new RegExp(`[^a-z0-9_-]${escape(n)}[^a-z0-9_-]`).test(text)) || DEFAULT_MODULE;
 }
 
+// The text of the turn's final answer: the Stop input when Claude Code sends it, else
+// the last assistant text in the tail of the transcript (after the last user prompt).
+export function finalAnswer(input) {
+  if (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) return input.last_assistant_message;
+  const file = input.transcript_path;
+  if (!file) return null;
+  let tail;
+  try {
+    const fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const length = Math.min(size, 512 * 1024);
+    const buf = Buffer.alloc(length);
+    fs.readSync(fd, buf, 0, length, size - length);
+    fs.closeSync(fd);
+    tail = buf.toString('utf8').split('\n');
+  } catch {
+    return null;
+  }
+  for (let i = tail.length - 1; i >= 0; i--) {
+    let rec;
+    try { rec = JSON.parse(tail[i]); } catch { continue; }
+    const content = rec.message?.content;
+    if (rec.type === 'user' && typeof content === 'string' && !rec.isMeta) return null;
+    if (rec.type !== 'assistant' || !Array.isArray(content)) continue;
+    const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+// One line, no markdown, for the task's current_step ("resultado: ...").
+export function outcomeLine(text, max = 230) {
+  const plain = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s?)/gm, '')
+    .replace(/(\*\*|__|\*|_)(\S[^*_]*?)\1/g, '$2')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!plain) return null;
+  if (plain.length <= max) return plain;
+  const cutAt = plain.lastIndexOf(' ', max - 1);
+  return `${plain.slice(0, cutAt > max * 0.6 ? cutAt : max - 1)}…`;
+}
+
 export function upsertReminder(taskId) {
   return `Lembrete da ${STAGE.CLOSE}: antes da resposta final, grave com upsert o que este trabalho decidiu ou revelou ` +
     `(decisão, modelo, débito; summary em inglês, até 250 caracteres). ${taskId ? `A ${taskId} fecha sozinha` : 'A tarefa fecha sozinha'} ao fim do turno.`;

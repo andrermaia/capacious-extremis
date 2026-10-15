@@ -1,9 +1,11 @@
-// Registers the protocol hooks in ~/.claude/settings.json and the protocol text in
-// ~/.claude/CLAUDE.md of a Claude Code on the web VM. Idempotent: entries already
-// pointing at this skill are replaced, anything else in the files is kept.
+// Registers the protocol hooks in ~/.claude/settings.json, the protocol text in
+// ~/.claude/CLAUDE.md of a Claude Code on the web VM, and the universal agent rules
+// from the knowledge base (sync-rules). Idempotent: entries already pointing at this
+// skill are replaced, anything else in the files is kept.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const skill = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,7 +21,12 @@ const hook = (script, extra = {}) => ({
 });
 
 const wanted = {
-  SessionStart: [{ hooks: [{ type: 'command', command: `sh "${path.join(skill, 'cloud', 'link-repo.sh')}"`, timeout: 10 }] }],
+  SessionStart: [{
+    hooks: [
+      { type: 'command', command: `sh "${path.join(skill, 'cloud', 'link-repo.sh')}"`, timeout: 10 },
+      { type: 'command', command: `node "${path.join(skill, 'scripts', 'hooks', 'on-session-start.mjs')}"`, timeout: 30, statusMessage: 'Contexto da sessão · carregando do Takius' },
+    ],
+  }],
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
   PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
   PostToolUse: [{ matcher: 'Bash', hooks: [hook('on-cli-call.mjs', { timeout: 10 })] }],
@@ -48,4 +55,8 @@ const re = new RegExp(`${begin}[\\s\\S]*?${end}`);
 md = re.test(md) ? md.replace(re, block) : `${md.trim()}\n\n${block}\n`.trimStart();
 fs.writeFileSync(claudeMdPath, md);
 
-console.log(`hooks -> ${settingsPath}\nprotocol -> ${claudeMdPath}`);
+// The universal rules come from the knowledge base; a failure here must not break the setup.
+const rules = spawnSync(process.execPath, [path.join(skill, 'scripts', 'sync-rules.mjs'), '--no-root', '--quiet'], { encoding: 'utf8' });
+const rulesNote = rules.status === 0 ? 'universal rules -> ' + claudeMdPath : `universal rules NOT synced: ${(rules.stderr || '').trim().slice(0, 200)}`;
+
+console.log(`hooks -> ${settingsPath}\nprotocol -> ${claudeMdPath}\n${rulesNote}`);

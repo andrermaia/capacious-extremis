@@ -11,11 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(__dirname, '..');
 const hook = (name) => path.join(skillDir, 'scripts', 'hooks', name);
 
-// A fake shared API: records every call, answers like the Takius context API.
+// A fake shared API: records every call, keeps tasks, answers like the Takius context API.
 function fakeApi() {
   const calls = [];
+  const tasks = [];
   let down = false;
   let n = 0;
+  const task = (id) => tasks.find((t) => t.id === id) || {};
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (d) => { body += d; });
@@ -23,13 +25,23 @@ function fakeApi() {
       const url = new URL(req.url, 'http://x');
       const route = url.pathname.replace(/^\/v1\/context\//, '');
       const json = body ? JSON.parse(body) : {};
-      calls.push({ route, project: url.searchParams.get('project'), body: json });
+      const project = url.searchParams.get('project');
+      calls.push({ route, method: req.method, project, query: Object.fromEntries(url.searchParams), body: json });
       if (down) { res.writeHead(503); res.end('{"error":"down"}'); return; }
+      const now = () => new Date().toISOString();
       const reply = {
         modules: () => [{ module: 'louza', total_count: 3 }, { module: 'agent-context', total_count: 2 }],
-        'tasks/start': () => ({ status: 'IN_PROGRESS', id: `TASK-FAKE${++n}-${n}`, module: json.module }),
-        'tasks/step': () => ({ status: 'ok' }),
-        'tasks/finish': () => ({ status: 'ok', id: json.id, task_status: json.status }),
+        'tasks/start': () => {
+          const t = { id: `TASK-FAKE${++n}-${n}`, project_id: project, module: json.module, task_description: json.desc, status: 'IN_PROGRESS', current_step: 'Task started', updated_at: now() };
+          tasks.push(t);
+          return { status: 'IN_PROGRESS', id: t.id, module: t.module };
+        },
+        'tasks/step': () => { Object.assign(task(json.id), { current_step: json.step, updated_at: now() }); return { status: 'ok' }; },
+        'tasks/finish': () => { Object.assign(task(json.id), { status: json.status, updated_at: now() }); return { status: 'ok', id: json.id, task_status: json.status }; },
+        tasks: () => tasks.filter((t) => t.project_id === project && (!url.searchParams.get('status') || t.status === url.searchParams.get('status')))
+          .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+        query: () => (url.searchParams.get('phase') === 'in_progress'
+          ? [{ id: 'LOUZA-WIP-1', module: 'louza', phase: 'in_progress', tasks_progress: '02/05', summary: 'Rematricula 2027 half done' }] : []),
         upsert: () => ({ status: 'ok', id: json.id, action: 'inserted' }),
       }[route];
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -39,6 +51,7 @@ function fakeApi() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     url: `http://127.0.0.1:${server.address().port}/v1/context`,
     calls,
+    tasks,
     routes: (r) => calls.filter((c) => c.route === r),
     setDown: (v) => { down = v; },
     close: () => server.close(),
@@ -58,7 +71,10 @@ function workspace() {
 
 function runHook(ws, api, name, payload) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, CONTEXT_API_URL: api.url, CONTEXT_API_TOKEN: 'test', CLAUDE_PROJECT_DIR: ws.root, TEMP: ws.tmp, TMP: ws.tmp, TMPDIR: ws.tmp, NODE_NO_WARNINGS: '1' };
+    const env = {
+      ...process.env, CONTEXT_API_URL: api.url, CONTEXT_API_TOKEN: 'test', CLAUDE_PROJECT_DIR: ws.root,
+      TEMP: ws.tmp, TMP: ws.tmp, TMPDIR: ws.tmp, HOME: ws.base, USERPROFILE: ws.base, CONTEXT_SYNC_RULES: '0', NODE_NO_WARNINGS: '1',
+    };
     const child = spawn(process.execPath, [hook(name)], { env, cwd: ws.root });
     let out = '';
     let err = '';
@@ -171,4 +187,47 @@ test('with the API down the prompt says so and edits are denied', async () => {
   assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(denied.hookSpecificOutput.permissionDecisionReason, /fora do ar/);
   assert.equal(await stop('s10'), null);
+});
+
+const sessionStart = (sid, source = 'startup') => runHook(ws, api, 'on-session-start.mjs', { session_id: sid, hook_event_name: 'SessionStart', source });
+
+test('session start brings modules, other sessions\' work, recent results and in-progress items', async () => {
+  // Another session: one task still open, one finished with a result.
+  await prompt('other', 'ajustar o boletim do louza');
+  await prompt('other2', 'corrigir a rematrícula');
+  await runHook(ws, api, 'on-stop.mjs', { session_id: 'other2', hook_event_name: 'Stop', last_assistant_message: '## Feito\n\nCorrigi a **rematrícula** de 2027: três contratos voltaram ao convênio.' });
+
+  const out = await sessionStart('s11');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.match(ctx, /Módulos: louza \(3\), agent-context \(2\)/);
+  assert.match(ctx, /Em andamento em outras sessões[\s\S]*TASK-FAKE1-1 · louza · .* · ajustar o boletim do louza/);
+  assert.match(ctx, /Resultados recentes:\n- .* · corrigir a rematrícula → Feito Corrigi a rematrícula de 2027: três contratos voltaram ao convênio\./);
+  assert.match(ctx, /LOUZA-WIP-1 \(02\/05\) · Rematricula 2027 half done/);
+  assert.match(ctx, /search <palavras em inglês>/);
+  assert.ok(state('s11').sessionContext);
+});
+
+test('after session start the prompt hook skips the module list and the list-modules call', async () => {
+  await sessionStart('s12');
+  const before = api.routes('modules').length;
+  const out = await prompt('s12', 'pedido do louza');
+  assert.equal(api.routes('modules').length, before);
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /Módulos:/);
+  assert.match(out.hookSpecificOutput.additionalContext, /veio no início da sessão/);
+  assert.equal(api.routes('tasks/start').at(-1).body.module, 'louza');
+});
+
+test('on-stop saves the final answer from the transcript when the input lacks it', async () => {
+  await prompt('s13', 'pedido');
+  const transcript = path.join(ws.base, 't.jsonl');
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'pedido' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Vou olhar.' }, { type: 'tool_use', id: 'x', name: 'Bash', input: {} }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Pronto: o `on-stop` grava o [resultado](x.md).' }] } },
+  ];
+  fs.writeFileSync(transcript, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  await runHook(ws, api, 'on-stop.mjs', { session_id: 's13', hook_event_name: 'Stop', transcript_path: transcript });
+  assert.equal(api.routes('tasks/step').at(-1).body.step, 'resultado: Pronto: o on-stop grava o resultado.');
 });

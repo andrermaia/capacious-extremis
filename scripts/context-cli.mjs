@@ -11,7 +11,9 @@ const defaultSchemaPath = path.resolve(__dirname, '../references/schema.sql');
 // The shared knowledge base lives on the Takius server; the local SQLite file is
 // only a read-only cache, refreshed by `pull`. Use --no-api to work fully offline.
 const DEFAULT_API_URL = 'https://api.takius.com.br/v1/context';
-const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks'];
+const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks', 'search'];
+// Knowledge every project shares (universal agent rules live in its "rules" module).
+const GLOBAL_PROJECT = 'global';
 const WRITE_COMMANDS = ['upsert', 'task-start', 'task-step', 'task-finish'];
 
 // Raised by the CLI itself (bad flags, oversized summary) — never a connectivity problem.
@@ -29,7 +31,54 @@ function isApiUnavailable(err) {
 
 // Flags that take no value. Without this list `--no-api query` would consume
 // "query" as the flag's value and leave the CLI with no command at all.
-const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help']);
+const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help', 'all']);
+
+// Same matching as the API's /search: lower case, no accents, one point per word found,
+// ranked by where it was found (summary or id > module or feature > details).
+const ACCENTED = 'áàâãäåéèêëíìîïóòôõöúùûüçñ';
+const PLAIN = 'aaaaaaeeeeiiiiooooouuuucn';
+function normText(text) {
+  return String(text || '').toLowerCase().replace(/[^\x00-\x7f]/g, (c) => {
+    const i = ACCENTED.indexOf(c);
+    return i >= 0 ? PLAIN[i] : c;
+  });
+}
+
+function searchTerms(q) {
+  const terms = normText(q).replace(/[%_\\]/g, ' ').split(/\s+/).filter((t) => t.length >= 2);
+  return [...new Set(terms)].slice(0, 8);
+}
+
+function searchScope(options, projectId) {
+  if (options.all) return [];
+  return [...new Set([projectId, GLOBAL_PROJECT])];
+}
+
+function searchLocal(db, terms, scope, limit) {
+  const inScope = (r) => !scope.length || scope.includes(r.project_id);
+  const has = (text, t) => normText(text).includes(t);
+  const knowledge = db.prepare('SELECT * FROM system_knowledge').all().filter(inScope).map((r) => {
+    let hits = 0;
+    let score = 0;
+    for (const t of terms) {
+      const top = has(r.summary, t) || has(r.id, t);
+      const mid = has(r.module, t) || has(r.feature, t);
+      const low = has(r.details, t);
+      if (top || mid || low) hits += 1;
+      score += top ? 3 : mid ? 2 : low ? 1 : 0;
+    }
+    const { details, ...row } = r;
+    return { ...row, hits, score };
+  }).filter((r) => r.hits > 0)
+    .sort((a, b) => b.hits - a.hits || b.score - a.score || String(b.updated_at).localeCompare(String(a.updated_at)))
+    .slice(0, limit);
+  const tasks = db.prepare('SELECT * FROM agent_tasks').all().filter(inScope).map((r) => ({
+    ...r, hits: terms.filter((t) => has(r.task_description, t) || has(r.current_step, t)).length,
+  })).filter((r) => r.hits > 0)
+    .sort((a, b) => b.hits - a.hits || String(b.updated_at).localeCompare(String(a.updated_at)))
+    .slice(0, 5);
+  return { query: terms.join(' '), scope: scope.length ? scope : 'all', knowledge, tasks };
+}
 
 function parseArgs(rawArgs) {
   const options = {
@@ -296,6 +345,18 @@ async function main() {
         console.log(JSON.stringify(data, null, 2));
         return;
       }
+
+      case 'search': {
+        const q = options.args.slice(1).join(' ') || options.q || '';
+        if (!searchTerms(q).length) throw new CliError('Usage: search <words> [--project <p>] [--all] [--limit <n>]');
+        let qs = `search?q=${encodeURIComponent(q)}`;
+        const scope = searchScope(options, projectId);
+        if (scope.length) qs += `&project=${encodeURIComponent(scope.join(','))}`;
+        if (options.limit) qs += `&limit=${encodeURIComponent(options.limit)}`;
+        const data = await requestApi(apiUrl, qs, {}, apiToken);
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
     }
     } catch (err) {
       // A rejected payload (400/401/403/404-on-record) is the agent's fault: surface it.
@@ -511,6 +572,15 @@ async function main() {
       break;
     }
 
+    case 'search': {
+      initializeDatabase(db);
+      const terms = searchTerms(options.args.slice(1).join(' ') || options.q || '');
+      if (!terms.length) throw new CliError('Usage: search <words> [--project <p>] [--all] [--limit <n>]');
+      const limit = Math.min(parseInt(options.limit, 10) || 15, 50);
+      console.log(JSON.stringify(searchLocal(db, terms, searchScope(options, projectId), limit), null, 2));
+      break;
+    }
+
     case 'help':
     default: {
       console.log(JSON.stringify({
@@ -526,6 +596,7 @@ async function main() {
           'task-step --id <id> --step "<step>"',
           'task-finish --id <id> [--status DONE|BLOCKED]',
           'list-tasks [--status <s>]',
+          'search <words> [--all] [--limit <n>]   (this project + global; --all spans every project)',
           'pull   (refresh the local read-only cache from the API)'
         ],
         target: `${DEFAULT_API_URL} by default; --no-api forces the local SQLite cache`,

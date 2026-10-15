@@ -42,12 +42,33 @@ Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_f
 
 | Hook | Event | Effect |
 |---|---|---|
+| `on-session-start.mjs` | `SessionStart` (startup, resume, clear, compact) | Injects once per session (and again after compaction): module list, tasks in progress in other sessions (48 h), blocked tasks, the latest results, knowledge items still `in_progress`, and the `search` command. Refreshes the universal rules files in the background (`sync-rules`, at most every 10 min) |
 | `on-prompt.mjs` | `UserPromptSubmit` | Detects the project from `cwd`, runs `list-modules` (API, then local) and **opens the task itself** (`task-start`, module guessed from the prompt, `general` otherwise) in parallel; a task still open from an interrupted turn is continued with `task-step`, one older than 6 h is closed as `BLOCKED`. Injects the module list, the task id and the exact `query`/`upsert` syntax |
 | `on-edit-guard.mjs` | `PreToolUse` on `Edit\|Write\|NotebookEdit` | Main agent only. The first edit of each turn carries the `upsert` reminder; with no task open (work resumed after the turn closed) it opens one instead of denying. **Denies** only when the API is unreachable. Subagents and files under `.agents/`, `.claude/` and `CLAUDE.md` pass straight through |
 | `on-cli-call.mjs` | `PostToolUse` on `Bash\|PowerShell` | Watches `context-cli.mjs` calls (all of them in a compound command; quoted text is ignored), records tasks closed by hand and the turn's upserts, prints the stage of each call |
-| `on-stop.mjs` | `Stop` | **Closes the open task (`DONE`) by itself** and shows how many items the turn saved. Never blocks the turn; if the API is down the task stays open and the next prompt continues it |
+| `on-stop.mjs` | `Stop` | **Closes the open task (`DONE`) by itself**, saves the first lines of the final answer as its result (`current_step` = `resultado: ...`, read by the next session start) and shows how many items the turn saved. Never blocks the turn; if the API is down the task stays open and the next prompt continues it |
 
 Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json` (written atomically); the last module list per project is cached next to it as `modules-<project>.json`. Edits made through shell commands (`sed`, heredocs) skip the edit guard, which only matters for the reminder: the task is already open.
+
+When the session-start hook ran, the prompt hook no longer repeats the module list (nor calls `list-modules`).
+
+## Universal Agent Rules (`sync-rules`)
+
+Rules that every agent follows in every project and folder live in the knowledge base itself: project `global`, module `rules`, one record per rule (`feature` = category, `summary` = the rule, English, max 250 chars; `--phase deprioritized` retires one). `scripts/sync-rules.mjs` renders them, with the protocol templates in `rules/`, into each agent's instruction file, inside a marked block (text outside the block is kept):
+
+| File | Content |
+|---|---|
+| `~/.claude/CLAUDE.md` | rules (Claude Code in any folder) |
+| `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` (when the folder exists) | rules + protocol without hooks (`rules/protocol-manual.md`) |
+| `<root>/CLAUDE.md` | protocol with hooks (`rules/protocol-hooks.md`) |
+| `<root>/AGENTS.md` | rules + protocol without hooks (any tool that reads `AGENTS.md`) |
+
+`<root>` is the folder holding `.agents/skills/managing-system-context`; in the cloud (`~/.agents`) there is none. A file that still holds a hand-written copy of the protocol is replaced whole after a `.bak-<date>` backup. The session-start hook keeps the files fresh; run it by hand after editing a rule:
+
+```bash
+node .agents/skills/managing-system-context/scripts/context-cli.mjs upsert --project global --module rules --id RULE-X --feature git --type architecture_decision --phase implemented --summary "<rule>"
+node .agents/skills/managing-system-context/scripts/sync-rules.mjs        # --dry-run shows what would change
+```
 
 Install in another repository:
 
@@ -109,7 +130,14 @@ Before writing any code or answering complex architecture queries:
    ```
    *Returns concise English summaries (max 250 chars) of architecture decisions, current behavior, and technical debt.*
 
-4. **On-Demand Deep Dive (Only if necessary)**:
+4. **In Doubt, Search Before Asking**:
+   ```bash
+   node .agents/skills/managing-system-context/scripts/context-cli.mjs search <words> --project <p>   # this project + global
+   node .agents/skills/managing-system-context/scripts/context-cli.mjs search <words> --all           # every project
+   ```
+   *Case- and accent-insensitive; ranks by words found, then where (summary or id > module or feature > details); also returns matching tasks. Summaries are English, so search with English keywords (Portuguese still finds details and task descriptions).*
+
+5. **On-Demand Deep Dive (Only if necessary)**:
    If a specific record requires full design specifications or code snippets:
    ```bash
    node .agents/skills/managing-system-context/scripts/context-cli.mjs get <ID>

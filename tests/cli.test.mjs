@@ -153,3 +153,25 @@ test('CLI: remote HTTP init reports connection to remote API', () => {
 });
 
 
+
+test('CLI: search ranks by words found, ignores accents, spans this project + global', () => {
+  runCli(['init']);
+  const add = (id, project, summary, details) => runCli(['upsert', '--project', project, '--id', id, '--module', 'm', '--feature', 'f',
+    '--type', 'current_behavior', '--phase', 'implemented', '--summary', summary, ...(details ? ['--details', details] : [])]);
+  add('A-1', 'test-proj', 'Migration runs before the image in production');
+  add('A-2', 'test-proj', 'Unrelated note', 'A migração entra antes da imagem em produção');
+  add('A-3', 'test-proj', 'Production image only');
+  add('G-1', 'global', 'Never stash; commit first');
+  add('O-1', 'other-proj', 'Migration order on another project');
+  runCli(['task-start', '--module', 'm', '--desc', 'Aplicar migração em produção']);
+
+  const english = runCli(['search', 'migration', 'production']);
+  assert.deepEqual(english.knowledge.map((r) => [r.id, r.hits]), [['A-1', 2], ['A-3', 1]]);
+  assert.equal(english.knowledge[0].details, undefined);
+  const accentless = runCli(['search', 'producao', 'imagem']);
+  assert.deepEqual(accentless.knowledge.map((r) => r.id), ['A-2']);
+  assert.equal(accentless.tasks.length, 1);
+  assert.deepEqual(runCli(['search', 'stash']).knowledge.map((r) => r.id), ['G-1']);
+  assert.deepEqual(runCli(['search', 'migration', '--all']).knowledge.map((r) => r.id).sort(), ['A-1', 'O-1']);
+  assert.throws(() => runCli(['search', 'x']));
+});
