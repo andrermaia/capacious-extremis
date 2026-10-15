@@ -31,7 +31,7 @@ test('stale in_progress knowledge and week-old open tasks are reported', () => {
   const f = analyse({
     now: NOW,
     knowledge: [
-      { id: 'K1', project_id: 'louza', phase: 'in_progress', updated_at: ago(31), summary: 'Old work in progress' },
+      { id: 'K1', project_id: 'louza', phase: 'in_progress', updated_at: ago(31), summary: 'Old work in progress', keywords: 'antigo' },
       { id: 'K2', project_id: 'louza', phase: 'in_progress', updated_at: ago(3), summary: 'Fresh work in progress' },
     ],
     tasks: [
@@ -41,8 +41,9 @@ test('stale in_progress knowledge and week-old open tasks are reported', () => {
     ],
   });
   assert.deepEqual(f.staleKnowledge.map((k) => k.id), ['K1']);
+  assert.deepEqual(f.missingKeywords.map((k) => k.id), ['K2']);
   assert.deepEqual(f.staleTasks.map((t) => t.id), ['T1']);
-  assert.equal(total(f), 2);
+  assert.equal(total(f), 3);
   assert.match(render(f, { fixed: 1, date: new Date(NOW) }), /Tarefas abertas sem movimento há 7\+ dias \(1 fechadas como BLOCKED\) \(1\)\n- louza\/T1 · 8 d · forgotten/);
   assert.match(summaryLine(f, { fixed: 1, date: new Date(NOW) }), /^Hygiene 15\/10\/2026: 1 stale in_progress, 1 stale tasks \(1 closed\)/);
   assert.ok(summaryLine(f).length <= 250);
