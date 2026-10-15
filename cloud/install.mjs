@@ -21,9 +21,9 @@ const hook = (script, extra = {}) => ({
 const wanted = {
   SessionStart: [{ hooks: [{ type: 'command', command: `sh "${path.join(skill, 'cloud', 'link-repo.sh')}"`, timeout: 10 }] }],
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
-  PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Verificando tarefa aberta' })] }],
+  PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
   PostToolUse: [{ matcher: 'Bash', hooks: [hook('on-cli-call.mjs', { timeout: 10 })] }],
-  Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · conferindo encerramento da tarefa' })] }],
+  Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
 };
 
 let settings = {};

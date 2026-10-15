@@ -77,10 +77,12 @@ node scripts/bootstrap-scan.mjs --import --db-path .agents/context.db
 
 Instructions in `CLAUDE.md` are advisory. To make the protocol mandatory, wire the hooks from `scripts/hooks/` into `.claude/settings.json` (full snippet in `SKILL.md`, section *Enforcement via Claude Code Hooks*):
 
-- **UserPromptSubmit** runs `list-modules` for the project detected from `cwd` (remote API first, local SQLite as fallback) and injects the result plus the three-stage protocol into the model context.
-- **PreToolUse** on `Edit|Write|NotebookEdit` denies edits until a `task-start` has been observed in the session.
-- **PostToolUse** on `Bash|PowerShell` tracks `task-start` / `task-finish` and prints each stage on screen (`Etapa 1/3 · Contexto`, `Etapa 2/3 · Tarefa`, `Etapa 3/3 · Encerramento`).
-- **Stop** blocks the end of the turn while a task is still open.
+- **UserPromptSubmit** runs `list-modules` for the project detected from `cwd` (remote API first, local SQLite as fallback), opens the task itself (`task-start`) and injects the module list, the task id and the protocol into the model context.
+- **PreToolUse** on `Edit|Write|NotebookEdit` reminds the main agent to `upsert` on the first edit of each turn and opens a task if none is open; it denies edits only when the API is unreachable. Subagents pass straight through.
+- **PostToolUse** on `Bash|PowerShell` tracks tasks closed by hand and the turn's upserts, and prints each stage on screen (`Etapa 1/3 · Contexto`, `Etapa 2/3 · Tarefa`, `Etapa 3/3 · Encerramento`).
+- **Stop** closes the open task (`DONE`) by itself; it never blocks the turn.
+
+The agent's part is `query` (Stage 1) and `upsert` (Stage 3). Subagents stay outside the protocol. Agents without hooks (Codex) still run `task-start` / `task-finish` by hand.
 
 Set `CONTEXT_API_URL` to point the prompt hook at your server (default `https://api.takius.com.br/v1/context`).
 

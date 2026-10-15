@@ -3,13 +3,20 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 export const STAGE = {
   CONTEXT: 'Etapa 1/3 · Contexto',
   TASK: 'Etapa 2/3 · Tarefa',
   CLOSE: 'Etapa 3/3 · Encerramento',
 };
+
+export const CLI = 'node .agents/skills/managing-system-context/scripts/context-cli.mjs';
+export const DEFAULT_MODULE = 'general';
+
+export function apiUrl() {
+  return process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
+}
 
 // Projects that exist in the central knowledge base. Folder prefixes map to them.
 const PROJECT_PREFIXES = [
@@ -89,12 +96,71 @@ export function loadState(sessionId) {
   }
 }
 
+// Write to a sibling file and rename, so a hook reading the state never sees half a JSON.
 export function saveState(sessionId, state) {
-  fs.writeFileSync(stateFile(sessionId), JSON.stringify(state, null, 2));
+  const file = stateFile(sessionId);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  try {
+    fs.renameSync(tmp, file);
+  } catch {
+    fs.writeFileSync(file, JSON.stringify(state, null, 2));
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 export function openTasks(state) {
   return (state.tasks || []).filter((t) => !t.finished);
+}
+
+export function recordTask(state, task) {
+  state.tasks ||= [];
+  if (!state.tasks.some((t) => t.id === task.id)) {
+    state.tasks.push({ finished: false, startedAt: new Date().toISOString(), ...task });
+  }
+}
+
+// The module list barely changes, so the last one seen per project lets the prompt
+// hook pick the task module without waiting for list-modules.
+function modulesCacheFile(project) {
+  return path.join(path.dirname(stateFile('modules')), `modules-${project}.json`);
+}
+
+export function loadModulesCache(project) {
+  try {
+    return JSON.parse(fs.readFileSync(modulesCacheFile(project), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export function saveModulesCache(project, modules) {
+  try {
+    fs.writeFileSync(modulesCacheFile(project), JSON.stringify(modules));
+  } catch {}
+}
+
+// The user prompt becomes the task description: no IDE/system wrappers, one line, short.
+export function cleanPrompt(prompt) {
+  return String(prompt || '')
+    .replace(/<(ide_selection|ide_opened_file|system-reminder|pasted_content)[^>]*>[\s\S]*?<\/\1>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+// Longest module name the prompt mentions as a whole word; DEFAULT_MODULE otherwise.
+export function guessModule(prompt, modules) {
+  const text = ` ${String(prompt || '').toLowerCase()} `;
+  const names = (modules || []).map((m) => String(m.module || '')).filter((n) => n.length >= 4);
+  names.sort((a, b) => b.length - a.length);
+  const escape = (s) => s.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return names.find((n) => new RegExp(`[^a-z0-9_-]${escape(n)}[^a-z0-9_-]`).test(text)) || DEFAULT_MODULE;
+}
+
+export function upsertReminder(taskId) {
+  return `Lembrete da ${STAGE.CLOSE}: antes da resposta final, grave com upsert o que este trabalho decidiu ou revelou ` +
+    `(decisão, modelo, débito; summary em inglês, até 250 caracteres). ${taskId ? `A ${taskId} fecha sozinha` : 'A tarefa fecha sozinha'} ao fim do turno.`;
 }
 
 // Run the context CLI and parse its JSON stdout. Returns { ok, data, error }.
@@ -105,6 +171,24 @@ export function runCli(root, args, { timeoutMs = 10000 } = {}) {
     timeout: timeoutMs,
     windowsHide: true,
   });
+  return parseCliResult(res);
+}
+
+// Same as runCli, without blocking: lets the prompt hook run list-modules and task-start together.
+export function runCliAsync(root, args, { timeoutMs = 10000 } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cliPath(root), ...args], { cwd: root, windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (error) => { clearTimeout(timer); resolve(parseCliResult({ error })); });
+    child.on('close', (status) => { clearTimeout(timer); resolve(parseCliResult({ stdout, stderr, status })); });
+  });
+}
+
+function parseCliResult(res) {
   if (res.error) return { ok: false, error: res.error.message };
   const out = (res.stdout || '').trim();
   try {
@@ -126,11 +210,17 @@ export function runCli(root, args, { timeoutMs = 10000 } = {}) {
 // Try the shared API first, then fall back to the local read-only cache.
 // Returns { ok, data, source: 'api'|'local', apiUrl, apiError }.
 export function runCliWithFallback(root, args) {
-  const apiUrl = process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
-  const remote = runCli(root, [...args, '--api-url', apiUrl], { timeoutMs: 8000 });
-  if (remote.ok) return { ...remote, source: 'api', apiUrl };
+  const url = apiUrl();
+  const remote = runCli(root, [...args, '--api-url', url], { timeoutMs: 8000 });
+  return withLocalFallback(root, args, remote);
+}
+
+// Given the API attempt of a read command, fall back to the local cache when it failed.
+export function withLocalFallback(root, args, remote) {
+  const url = apiUrl();
+  if (remote.ok) return { ...remote, source: 'api', apiUrl: url };
   const local = runCli(root, [...args, '--no-api']);
-  return { ...local, source: 'local', apiUrl, apiError: remote.error };
+  return { ...local, source: 'local', apiUrl: url, apiError: remote.error };
 }
 
 export function sourceFlags(source) {

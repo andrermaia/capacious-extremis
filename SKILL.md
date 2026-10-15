@@ -22,11 +22,13 @@ Every stage MUST be announced to the user in plain text **before** its command r
 
 | Stage | Label to print | When |
 |---|---|---|
-| 1 | `Etapa 1/3 · Contexto` | before `list-modules` / `query` |
-| 2 | `Etapa 2/3 · Tarefa` | before `task-start`; on `task-step` print the step text |
-| 3 | `Etapa 3/3 · Encerramento` | before `upsert` / `task-finish` |
+| 1 | `Etapa 1/3 · Contexto` | before `query` |
+| 2 | `Etapa 2/3 · Tarefa` | with hooks: mention the task id the prompt hook opened; without hooks: before `task-start`; on `task-step` print the step text |
+| 3 | `Etapa 3/3 · Encerramento` | before `upsert` (and, without hooks, `task-finish`) |
 
-Example: `Etapa 2/3 · Tarefa — abrindo TASK para o módulo louza_fe`. The Claude Code hooks (see below) echo the same labels as system messages, so the two views stay aligned.
+Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_fe)`. The Claude Code hooks (see below) echo the same labels as system messages, so the two views stay aligned.
+
+**Subagents stay outside the protocol.** They do not run `context-cli`; the coordinating agent passes them the context they need in the prompt and records what they found. The edit guard lets subagents through (their hook input carries `agent_id`).
 
 ## Target Selection (`--project`)
 
@@ -40,12 +42,12 @@ Example: `Etapa 2/3 · Tarefa — abrindo TASK para o módulo louza_fe`. The Cla
 
 | Hook | Event | Effect |
 |---|---|---|
-| `on-prompt.mjs` | `UserPromptSubmit` | Detects the project from `cwd`, runs `list-modules` (API, then local), injects the protocol + module list as context, shows `Etapa 1/3` on screen |
-| `on-edit-guard.mjs` | `PreToolUse` on `Edit\|Write\|NotebookEdit` | **Denies** file edits until a `task-start` was observed in the session (files under `.agents/`, `.claude/` and `CLAUDE.md` are exempt) |
-| `on-cli-call.mjs` | `PostToolUse` on `Bash\|PowerShell` | Watches `context-cli.mjs` calls, records open/finished tasks per session, prints the stage of each call |
-| `on-stop.mjs` | `Stop` | **Blocks the end of the turn** while a task is open and sends the `task-finish` instruction back to the agent |
+| `on-prompt.mjs` | `UserPromptSubmit` | Detects the project from `cwd`, runs `list-modules` (API, then local) and **opens the task itself** (`task-start`, module guessed from the prompt, `general` otherwise) in parallel; a task still open from an interrupted turn is continued with `task-step`, one older than 6 h is closed as `BLOCKED`. Injects the module list, the task id and the exact `query`/`upsert` syntax |
+| `on-edit-guard.mjs` | `PreToolUse` on `Edit\|Write\|NotebookEdit` | Main agent only. The first edit of each turn carries the `upsert` reminder; with no task open (work resumed after the turn closed) it opens one instead of denying. **Denies** only when the API is unreachable. Subagents and files under `.agents/`, `.claude/` and `CLAUDE.md` pass straight through |
+| `on-cli-call.mjs` | `PostToolUse` on `Bash\|PowerShell` | Watches `context-cli.mjs` calls (all of them in a compound command; quoted text is ignored), records tasks closed by hand and the turn's upserts, prints the stage of each call |
+| `on-stop.mjs` | `Stop` | **Closes the open task (`DONE`) by itself** and shows how many items the turn saved. Never blocks the turn; if the API is down the task stays open and the next prompt continues it |
 
-Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json`. Known gap: edits made through shell commands (`sed`, heredocs) bypass the edit guard; the Stop hook still catches the unfinished task.
+Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json` (written atomically); the last module list per project is cached next to it as `modules-<project>.json`. Edits made through shell commands (`sed`, heredocs) skip the edit guard, which only matters for the reminder: the task is already open.
 
 Install in another repository:
 
@@ -117,6 +119,8 @@ Before writing any code or answering complex architecture queries:
 
 ### Stage 2: Execution Hook (Task Tracking)
 
+With the Claude Code hooks installed the prompt hook has already opened the task and injected its id: do not run `task-start`. The steps below are for agents without hooks (Codex, other tools).
+
 1. **Start the Active Task**:
    ```bash
    node .agents/skills/managing-system-context/scripts/context-cli.mjs task-start --module <module_name> --desc "<brief user request>"
@@ -148,7 +152,7 @@ Before delivering your final response to the user:
      --details "Full implementation details and redirect URI config."
    ```
 
-2. **Mark Task Finished**:
+2. **Mark Task Finished** (without hooks; with hooks the Stop hook closes it as `DONE`, so run it only to record `--status BLOCKED`):
    ```bash
    node .agents/skills/managing-system-context/scripts/context-cli.mjs task-finish --id <TASK_ID> --status DONE
    ```
@@ -205,5 +209,7 @@ The backend is abstracted by `context-cli.mjs`. Since 2026-09-18 the source of t
 
 - Proceeding to answer or code without running `list-modules` or `query`.
 - Storing verbose multi-paragraph explanations in `summary` instead of `details`.
-- Ending a conversation turn without finishing the active task via `task-finish`.
+- Without hooks: ending a conversation turn without finishing the active task via `task-finish`.
+- With hooks: running `task-start`, `task-finish --status DONE`, `list-modules` or `--help` — the hooks already did it or injected it.
+- Asking a subagent to run `context-cli`, instead of passing it the context and recording its findings yourself.
 - Hardcoding database connection strings inside conversation chat turns.
