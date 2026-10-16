@@ -7,7 +7,7 @@
 // after every shell command. It never blocks the end of the turn: when the API is
 // unreachable the task stays open and the next prompt continues it.
 import {
-  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, apiUrl,
+  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, callApi, apiUrl,
   finalAnswer, outcomeLine, turnCliCalls, recordTask, STAGE,
 } from './hook-lib.mjs';
 
@@ -29,7 +29,7 @@ let open = openTasks(state);
 if (!open.length && state.turn?.trivial && toolUses > 0) {
   const project = state.project || detectProject(input, root).project;
   const desc = `${state.turn.prompt || 'pedido curto'}${state.lastDesc ? ` (continuação: ${state.lastDesc})` : ''}`.slice(0, 200);
-  const started = await runCliAsync(root, ['task-start', '--project', project, '--module', state.lastModule || 'general', '--desc', desc, '--api-url', apiUrl()], { timeoutMs: 7000 });
+  const started = await callApi(root, ['task-start', '--project', project, '--module', state.lastModule || 'general', '--desc', desc, '--api-url', apiUrl()], { timeoutMs: 7000 });
   if (started.ok && started.data?.id) {
     recordTask(state, { id: started.data.id, module: state.lastModule || 'general', project, by: 'on-stop (pedido curto)' });
     open = openTasks(state);
@@ -47,11 +47,11 @@ const projectOf = (task) => task.project || fallbackProject;
 const outcome = open.length ? outcomeLine(finalAnswer(input)) : null;
 const latest = [...open].sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt))).at(-1);
 const saving = outcome
-  ? runCliAsync(root, ['task-step', '--project', projectOf(latest), '--id', latest.id, '--step', `resultado: ${outcome}`, '--api-url', apiUrl()], { timeoutMs: 7000 })
+  ? callApi(root, ['task-step', '--project', projectOf(latest), '--id', latest.id, '--step', `resultado: ${outcome}`, '--api-url', apiUrl()], { timeoutMs: 7000 })
   : null;
 const [results] = await Promise.all([
   Promise.all(open.map((task) =>
-    runCliAsync(root, ['task-finish', '--project', projectOf(task), '--id', task.id, '--status', 'DONE', '--api-url', apiUrl()], { timeoutMs: 7000 }))),
+    callApi(root, ['task-finish', '--project', projectOf(task), '--id', task.id, '--status', 'DONE', '--api-url', apiUrl()], { timeoutMs: 7000 }))),
   saving,
 ]);
 for (const [i, task] of open.entries()) {

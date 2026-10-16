@@ -367,6 +367,55 @@ export function runCli(root, args, { timeoutMs = 10000 } = {}) {
   return parseCliResult(res);
 }
 
+// The hooks' calls to the shared base, made with fetch inside the hook process instead of
+// spawning the CLI (one Node start per call cost ~0.3 s; the session start made six). The
+// arguments are the CLI's, so a call reads the same either way; the answer is the API's JSON,
+// which is also what the CLI prints. A read that fails here gets no local-cache fallback
+// (withLocalFallback still covers the module list).
+export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
+  const [command, ...rest] = args;
+  const opts = {};
+  const words = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (!a.startsWith('--')) { words.push(a); continue; }
+    const key = a.slice(2);
+    const next = rest[i + 1];
+    if (next !== undefined && !next.startsWith('--') && key !== 'all') { opts[key] = next; i++; } else opts[key] = true;
+  }
+  const project = opts.project;
+  const base = String(opts['api-url'] || apiUrl()).replace(/\/$/, '');
+  const q = (pairs) => pairs.filter(([, v]) => v != null && v !== true).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  let method = 'GET';
+  let endpoint;
+  let body;
+  switch (command) {
+    case 'list-modules': endpoint = `modules?${q([['project', project]])}`; break;
+    case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
+    case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
+    case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
+    case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
+    case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;
+    default: return runCliAsync(root, args, { timeoutMs });
+  }
+  const token = cliEnv(root).CONTEXT_API_TOKEN;
+  try {
+    const res = await fetch(`${base}/${endpoint}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, error: `API error (${res.status}): ${data?.error || res.statusText}` };
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err.name === 'TimeoutError' ? `API timeout after ${timeoutMs} ms` : err.message };
+  }
+}
+
 // Same as runCli, without blocking: lets the prompt hook run list-modules and task-start together.
 export function runCliAsync(root, args, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {

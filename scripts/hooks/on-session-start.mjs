@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, withLocalFallback,
+  readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, callApi, withLocalFallback,
   saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, CLI,
 } from './hook-lib.mjs';
 
@@ -25,7 +25,7 @@ if (!root) process.exit(0); // outside every project: only the universal rules a
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
 const state = loadState(input.session_id);
-const read = (args) => runCliAsync(root, [...args, '--project', project, '--api-url', url], { timeoutMs: 8000 });
+const read = (args) => callApi(root, [...args, '--project', project, '--api-url', url], { timeoutMs: 8000 });
 
 // Background jobs, detached and throttled across sessions by stamp files.
 inBackground('sync-rules', 10 * 60 * 1000, [scriptPath('sync-rules.mjs'), '--quiet']);
@@ -39,7 +39,7 @@ const [modulesRaw, open, blocked, done, inProgress, hygiene] = await Promise.all
   read(['list-tasks', '--status', 'BLOCKED', '--limit', '10']),
   read(['list-tasks', '--status', 'DONE', '--limit', '30']),
   read(['query', '--phase', 'in_progress']),
-  runCliAsync(root, ['get', 'HYGIENE-REPORT', '--project', 'global', '--api-url', url], { timeoutMs: 8000 }),
+  callApi(root, ['get', 'HYGIENE-REPORT', '--project', 'global', '--api-url', url], { timeoutMs: 8000 }),
 ]);
 const listing = withLocalFallback(root, ['list-modules', '--project', project], modulesRaw);
 const modules = listing.ok && Array.isArray(listing.data) ? listing.data : [];

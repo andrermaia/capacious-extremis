@@ -10,7 +10,7 @@
 import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
-  runCli, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE,
+  callApi, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
@@ -35,7 +35,7 @@ if (open.length > 0) {
 const project = state.project || detectProject(input, root).project;
 const module = state.lastModule || DEFAULT_MODULE;
 const desc = state.lastDesc ? `continuação: ${state.lastDesc}` : `edição de ${path.basename(target)}`;
-const started = runCli(root, ['task-start', '--project', project, '--module', module, '--desc', desc, '--api-url', apiUrl()], { timeoutMs: 8000 });
+const started = await callApi(root, ['task-start', '--project', project, '--module', module, '--desc', desc, '--api-url', apiUrl()], { timeoutMs: 8000 });
 const id = started.ok ? started.data?.id : null;
 
 if (id) {

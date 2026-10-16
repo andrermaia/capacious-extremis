@@ -5,7 +5,7 @@
 // it (no session-start hook), also the module list and the whole protocol.
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
-  runCliAsync, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
+  runCliAsync, callApi, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
   guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, STAGE,
 } from './hook-lib.mjs';
 
@@ -29,7 +29,7 @@ const trivial = !notice && isTrivialPrompt(input.prompt);
 const cached = loadModulesCache(project);
 const primed = Boolean(state.sessionContext) && Array.isArray(cached);
 const listArgs = ['list-modules', '--project', project];
-const listing = primed ? null : runCliAsync(root, [...listArgs, '--api-url', url], { timeoutMs: 8000 });
+const listing = primed ? null : callApi(root, [...listArgs, '--api-url', url], { timeoutMs: 8000 });
 
 // An interrupted turn or a queued prompt leaves the task open: the new prompt continues it.
 const open = openTasks(state);
@@ -37,7 +37,7 @@ const isFresh = (t) => (t.project || project) === project && Date.now() - Date.p
 const current = open.filter(isFresh).at(-1);
 const stale = open.filter((t) => !isFresh(t));
 const closing = stale.map((t) =>
-  runCliAsync(root, ['task-finish', '--project', t.project || project, '--id', t.id, '--status', 'BLOCKED', '--api-url', url], { timeoutMs: 8000 })
+  callApi(root, ['task-finish', '--project', t.project || project, '--id', t.id, '--status', 'BLOCKED', '--api-url', url], { timeoutMs: 8000 })
     .then((r) => { if (r.ok) t.finished = true; }));
 
 let module = current?.module;
@@ -45,19 +45,19 @@ let taskRun;
 if (trivial && !current) {
   taskRun = Promise.resolve({ ok: true, data: null, skipped: true });
 } else if (current) {
-  taskRun = runCliAsync(root, ['task-step', '--project', project, '--id', current.id, '--step', notice ? prompt : `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
+  taskRun = callApi(root, ['task-step', '--project', project, '--id', current.id, '--step', notice ? prompt : `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
 } else {
   // First prompt ever for this project: wait for the module list to pick the module.
   const known = cached || (await listing).data;
   module = guessModule(prompt, Array.isArray(known) ? known : []);
-  taskRun = runCliAsync(root, ['task-start', '--project', project, '--module', module, '--desc', prompt || 'pedido sem texto', '--api-url', url], { timeoutMs: 8000 });
+  taskRun = callApi(root, ['task-start', '--project', project, '--module', module, '--desc', prompt || 'pedido sem texto', '--api-url', url], { timeoutMs: 8000 });
 }
 
 // The agent's first move used to be a query/search turn that re-read the whole context:
 // the hook searches the base with the prompt's words instead, in parallel.
 const words = notice || trivial ? [] : searchWords(prompt);
 const searching = words.length
-  ? runCliAsync(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
+  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
   : null;
 
 const [listed, task, found] = await Promise.all([listing, taskRun, searching, ...closing]);
