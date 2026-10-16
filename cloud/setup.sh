@@ -7,8 +7,8 @@
 # user settings and writes the protocol to the VM's user CLAUDE.md. Each session
 # then links ~/.agents into the cloned repository (SessionStart), so the hooks
 # resolve the skill and detect the project from the repository folder name.
-# Requires CONTEXT_API_TOKEN in the environment variables and network access to
-# api.takius.com.br (Custom allowlist). SKILL_REPO_TOKEN is optional and only
+# Requires CONTEXT_API_URL and CONTEXT_API_TOKEN in the environment variables and network
+# access to the API's host (Custom allowlist). SKILL_REPO_TOKEN is optional and only
 # needed if this repository is ever made private.
 set -euo pipefail
 

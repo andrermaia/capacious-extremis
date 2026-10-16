@@ -15,6 +15,7 @@ const STALE_MS = 6 * 60 * 60 * 1000;
 const input = readStdinJson();
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
+if (!apiUrl()) process.exit(0); // no API configured on this machine: session start says so
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
 // A background task finishing comes in as a <task-notification> "prompt": it continues the

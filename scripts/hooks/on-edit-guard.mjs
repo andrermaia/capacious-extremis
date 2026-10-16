@@ -16,6 +16,7 @@ import {
 const input = readStdinJson();
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: nothing to track
+if (!apiUrl()) process.exit(0); // no API configured on this machine: session start says so
 
 const target = String(input.tool_input?.file_path || input.tool_input?.notebook_path || '').replace(/\\/g, '/');
 if (/\/(\.agents|\.claude)\//.test(target) || /\/CLAUDE\.md$/.test(target)) process.exit(0);

@@ -17,6 +17,7 @@ if (input.agent_id) process.exit(0);
 
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
+if (!apiUrl()) process.exit(0); // no API configured on this machine: session start says so
 
 // A draft needs a real piece of work: a few tool calls, not a one-line fix.
 const DRAFT_MIN_TOOLS = 4;

@@ -10,7 +10,7 @@ const ago = (days) => new Date(NOW - days * 86400000).toISOString();
 
 test('Portuguese prose is flagged; English with Portuguese names, quotes and domains is not', () => {
   assert.equal(notEnglish('MEDIDO: um fluxo SSE aberto NAO cai quando o token expira e nao revalida para nada'), true);
-  assert.equal(notEnglish("andremaia.com.br = Swarm stack on takius; 'Você não tem acesso' shown for Pia-Máter staff"), false);
+  assert.equal(notEnglish("example.com.br = Swarm stack on host1; 'Você não tem acesso' shown for Pia-Máter staff"), false);
   assert.equal(notEnglish('Rematricula 2027 renewal is live for the Escola de Teste'), false);
 });
 

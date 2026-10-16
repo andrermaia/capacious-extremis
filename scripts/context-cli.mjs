@@ -2,14 +2,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { configuredApiUrl, configuredEnv, MISSING_API_URL } from './api-config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultSchemaPath = path.resolve(__dirname, '../references/schema.sql');
 
-// The shared knowledge base lives on the Takius server; the local SQLite file is
+// The shared knowledge base lives on a server (CONTEXT_API_URL); the local SQLite file is
 // only a read-only cache, refreshed by `pull`. Use --no-api to work fully offline.
-const DEFAULT_API_URL = 'https://api.takius.com.br/v1/context';
 const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks', 'search'];
 // Knowledge every project shares (universal agent rules live in its "rules" module).
 const GLOBAL_PROJECT = 'global';
@@ -278,8 +278,14 @@ async function main() {
   const options = parseArgs(rawArgs);
 
   const command = options.args[0] || 'help';
-  const apiUrl = options['no-api'] ? null : (options['api-url'] || process.env.CONTEXT_API_URL || DEFAULT_API_URL);
-  const apiToken = options['api-token'] || process.env.CONTEXT_API_TOKEN;
+  const apiUrl = options['no-api'] ? null : (options['api-url'] || configuredApiUrl());
+  const apiToken = options['api-token'] || configuredEnv('CONTEXT_API_TOKEN');
+  // No address configured is not --no-api: writes refuse (the local cache is read-only), reads
+  // say they come from the cache.
+  if (!options['no-api'] && !apiUrl) {
+    if (WRITE_COMMANDS.includes(command) || command === 'pull') throw new Error(`${MISSING_API_URL} Writes never go to the local cache.`);
+    if (READ_COMMANDS.includes(command)) process.stderr.write(`[context-cli] ${MISSING_API_URL} Reading the local cache, which may be stale.\n`);
+  }
   const dbPath = options['db-path'] || process.env.CONTEXT_DB_PATH || path.resolve(process.cwd(), '.agents/context.db');
   const projectId = options.project || process.env.PROJECT_ID || path.basename(process.cwd());
 
@@ -765,7 +771,7 @@ async function main() {
           'search <words> [--all] [--limit <n>]   (this project + global; --all spans every project)',
           'pull   (refresh the local read-only cache from the API)'
         ],
-        target: `${DEFAULT_API_URL} by default; --no-api forces the local SQLite cache`,
+        target: 'the API at CONTEXT_API_URL (environment or the "env" block of .claude/settings.local.json); --no-api forces the local SQLite cache',
         auth: 'CONTEXT_API_TOKEN (or --api-token) is required by the API'
       }, null, 2));
       break;

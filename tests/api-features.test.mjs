@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseLog } from '../scripts/ingest-commits.mjs';
+import { configuredApiUrl } from '../scripts/api-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(__dirname, '..');
@@ -127,6 +128,66 @@ test('ingest-commits sends each clone\'s new commits, oldest first, to its produ
     assert.match(r.out, /"inserted":2/);
   } finally {
     api.close();
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// A machine with no API address configured: an empty HOME and working folder, no CONTEXT_API_URL.
+function bareMachine() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-noapi-'));
+  const env = { CONTEXT_API_URL: '', CONTEXT_API_TOKEN: '', HOME: base, USERPROFILE: base };
+  return { base, env };
+}
+
+test('the API address comes from the environment, else from the settings env of the folders above', () => {
+  const { base } = bareMachine();
+  const saved = process.env.CONTEXT_API_URL;
+  try {
+    delete process.env.CONTEXT_API_URL;
+    const work = path.join(base, 'projetos', 'louza');
+    fs.mkdirSync(work, { recursive: true });
+    assert.equal(configuredApiUrl({ cwd: work, home: base }), null);
+    fs.mkdirSync(path.join(base, 'projetos', '.claude'));
+    fs.writeFileSync(path.join(base, 'projetos', '.claude', 'settings.local.json'), JSON.stringify({ env: { CONTEXT_API_URL: 'https://kb.example.test/v1/context/' } }));
+    assert.equal(configuredApiUrl({ cwd: work, home: base }), 'https://kb.example.test/v1/context');
+    process.env.CONTEXT_API_URL = 'https://env.example.test/v1';
+    assert.equal(configuredApiUrl({ cwd: work, home: base }), 'https://env.example.test/v1');
+  } finally {
+    if (saved === undefined) delete process.env.CONTEXT_API_URL; else process.env.CONTEXT_API_URL = saved;
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('with no API address the CLI refuses writes and never falls back to the local cache', async () => {
+  const { base, env } = bareMachine();
+  try {
+    const item = [{ id: 'X-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 's', keywords: 'a' }];
+    const r = await run(cliPath, ['--project', 'p', '--db-path', path.join(base, 'c.db'), 'upsert', '--file', '-'], { input: JSON.stringify(item), env, cwd: base });
+    assert.notEqual(r.status, 0);
+    assert.match(r.err, /CONTEXT_API_URL not configured[\s\S]*Writes never go to the local cache/);
+    assert.equal(fs.existsSync(path.join(base, 'c.db')), false);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('with no API address the session start says so once and the other hooks stay silent', async () => {
+  const { base, env } = bareMachine();
+  try {
+    const root = path.join(base, 'projetos');
+    fs.mkdirSync(path.join(root, '.agents', 'skills'), { recursive: true });
+    fs.symlinkSync(skillDir, path.join(root, '.agents', 'skills', 'managing-system-context'), 'junction');
+    const hook = (name, payload) => run(path.join(skillDir, 'scripts', 'hooks', name), [], {
+      input: JSON.stringify({ cwd: root, session_id: 'n1', ...payload }), env: { ...env, TEMP: base, TMP: base, TMPDIR: base, CONTEXT_SYNC_RULES: '0' }, cwd: root,
+    });
+    const start = await hook('on-session-start.mjs', { hook_event_name: 'SessionStart', source: 'startup' });
+    assert.match(JSON.parse(start.out).systemMessage, /CONTEXT_API_URL não configurada/);
+    const prompt = await hook('on-prompt.mjs', { hook_event_name: 'UserPromptSubmit', prompt: 'corrija o boletim' });
+    assert.equal(prompt.status, 0);
+    assert.equal(prompt.out.trim(), '');
+    const edit = await hook('on-edit-guard.mjs', { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(root, 'louza', 'a.ts') } });
+    assert.equal(edit.out.trim(), ''); // no deny: a machine without the base is not an outage
+  } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
 });

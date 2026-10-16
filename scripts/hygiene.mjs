@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { configuredApiUrl, MISSING_API_URL } from './api-config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
@@ -138,7 +139,8 @@ function token() {
 }
 
 async function api(endpoint, init = {}) {
-  const base = process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
+  const base = configuredApiUrl();
+  if (!base) throw new Error(MISSING_API_URL);
   const res = await fetch(`${base.replace(/\/$/, '')}/${endpoint}`, {
     ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}`, ...(init.headers || {}) },
   });

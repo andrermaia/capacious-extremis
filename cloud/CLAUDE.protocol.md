@@ -4,7 +4,7 @@ Before analyzing, investigating, or writing code for ANY task, follow the `manag
 
 Always pass `--project <id>` (louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews, projetos). The prompt hook detects it from the repository folder name.
 
-The knowledge base is shared on the Takius server: `https://api.takius.com.br/v1/context`. The CLI targets it by default — do not pass `--api-url`. Authentication is `CONTEXT_API_TOKEN` from the cloud environment variables. If the API is unreachable, writes fail on purpose: report it to the user, never use `--no-api` (that writes into a copy nobody else sees).
+The knowledge base is shared on a server whose address is `CONTEXT_API_URL` in the cloud environment variables. The CLI targets it by default — do not pass `--api-url`. Authentication is `CONTEXT_API_TOKEN` from the same variables. If the API is unreachable, writes fail on purpose: report it to the user, never use `--no-api` (that writes into a copy nobody else sees).
 
 Your part: `query`/`search` when the injected hits are not enough, and before the final answer one batch `upsert --file -` with the new decisions, models or debts (English summaries, max 250 characters). Run `task-finish --project <p> --id <TASK_ID> --status BLOCKED` only when the work got stuck.
 
@@ -12,4 +12,4 @@ Subagents stay outside the protocol: do not ask them to run `context-cli`; pass 
 
 `.agents` in the repository is a symlink created by a SessionStart hook and listed in `.git/info/exclude`: never commit it.
 
-Git: the source of truth and CI/CD (Gitea Actions) live on `git.takius.com.br`; GitHub is a mirror. When `TAKIUS_GIT_TOKEN` is set, each cloned repository has a `takius` remote: push work branches to it too (`git push -u takius <branch>`) so CI runs. After cloning a repository mid-session, run `sh ~/.agents/skills/managing-system-context/cloud/takius-git.sh` to give it the remote.
+Git: the source of truth and CI/CD (Gitea Actions) live on the Gitea at `TAKIUS_GIT_HOST`; GitHub is a mirror. When `TAKIUS_GIT_TOKEN` is set, each cloned repository has a `takius` remote: push work branches to it too (`git push -u takius <branch>`) so CI runs. After cloning a repository mid-session, run `sh ~/.agents/skills/managing-system-context/cloud/takius-git.sh` to give it the remote.

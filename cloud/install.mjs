@@ -24,10 +24,10 @@ const wanted = {
   SessionStart: [{
     hooks: [
       { type: 'command', command: `sh "${path.join(skill, 'cloud', 'link-repo.sh')}"`, timeout: 10 },
-      { type: 'command', command: `node "${path.join(skill, 'scripts', 'hooks', 'on-session-start.mjs')}"`, timeout: 30, statusMessage: 'Contexto da sessão · carregando do Takius' },
+      { type: 'command', command: `node "${path.join(skill, 'scripts', 'hooks', 'on-session-start.mjs')}"`, timeout: 30, statusMessage: 'Contexto da sessão · carregando da base' },
     ],
   }],
-  UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
+  UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto da base' })] }],
   PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
   Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
 };

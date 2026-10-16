@@ -1,16 +1,16 @@
 #!/usr/bin/env sh
 # SessionStart hook (cloud only), called by link-repo.sh: lets the session clone
-# and push to the self-hosted Gitea (git.takius.com.br), where CI/CD runs on
+# and push to the self-hosted Gitea (TAKIUS_GIT_HOST), where CI/CD runs on
 # Gitea Actions. GitHub is only a mirror.
 #
-#   1. Git authenticates on https://git.takius.com.br with TAKIUS_GIT_TOKEN. The
+#   1. Git authenticates on https://$TAKIUS_GIT_HOST with TAKIUS_GIT_TOKEN. The
 #      helper reads the variable when git asks, so the token never hits disk.
 #   2. Every repository cloned next to the project from GitHub (owner
 #      TAKIUS_GITHUB_OWNER) gets a `takius` remote pointing at the same name on
 #      the Gitea (owner TAKIUS_GIT_OWNER).
 #
 # Needs, in the environment: TAKIUS_GIT_TOKEN (Gitea token, repository read and
-# write) and git.takius.com.br in the network allowlist. Without the token it
+# write), TAKIUS_GIT_HOST and that host in the network allowlist. Without them it
 # does nothing. No network here: the hook has a 10 s timeout.
 #
 # Repositories attached mid-session are not seen by the hook; run this script
@@ -19,7 +19,8 @@
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
 [ -n "${TAKIUS_GIT_TOKEN:-}" ] || exit 0
 
-host="${TAKIUS_GIT_HOST:-git.takius.com.br}"
+host="${TAKIUS_GIT_HOST:-}"
+[ -n "$host" ] || exit 0 # the Gitea address is configuration, never a default here
 gitea_owner="${TAKIUS_GIT_OWNER:-andre}"
 github_owner="${TAKIUS_GITHUB_OWNER:-andrermaia}"
 key="credential.https://$host.helper"

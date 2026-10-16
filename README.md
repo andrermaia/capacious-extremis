@@ -85,7 +85,7 @@ Instructions in `CLAUDE.md` are advisory. To make the protocol mandatory, wire t
 
 `scripts/install-hooks.mjs` puts the hooks in the user settings, so they run in every folder (and do nothing outside a project); `scripts/hygiene.mjs` is the weekly clean-up report, triggered by the session-start hook. The agent's part is `query` (Stage 1), `search` when in doubt, and `upsert` (Stage 3). Universal agent rules live in the base (project `global`, module `rules`) and `scripts/sync-rules.mjs` writes them into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` and the project's `CLAUDE.md`/`AGENTS.md` (see `SKILL.md`). Subagents stay outside the protocol. Agents without hooks (Codex) still run `task-start` / `task-finish` by hand.
 
-Set `CONTEXT_API_URL` to point the prompt hook at your server (default `https://api.takius.com.br/v1/context`).
+Set `CONTEXT_API_URL` (and `CONTEXT_API_TOKEN`) in the environment or in the `env` block of `<root>/.claude/settings.local.json` (or `~/.claude/settings.json`): there is no default address, so this public repository never names a server. Without it the CLI refuses writes and the hooks stay silent, saying so once at session start.
 
 ## Agent Protocol
 
@@ -122,15 +122,15 @@ and a `SessionStart` hook links `~/.agents` into each cloned repository (exclude
 
 In claude.ai/code → environment settings:
 
-- **Environment variables**: `CONTEXT_API_TOKEN=<token>`; optionally `TAKIUS_GIT_TOKEN=<Gitea token>`
-  (repository read and write).
-- **Network access**: Custom, add `api.takius.com.br` (and `git.takius.com.br` with the Gitea token),
-  keep the default list.
+- **Environment variables**: `CONTEXT_API_URL=<API base URL>`, `CONTEXT_API_TOKEN=<token>`; optionally
+  `TAKIUS_GIT_HOST=<Gitea host>` with `TAKIUS_GIT_TOKEN=<Gitea token>` (repository read and write).
+- **Network access**: Custom, add the API's host (and the Gitea host with the Gitea token), keep the
+  default list.
 
-With `TAKIUS_GIT_TOKEN`, the `SessionStart` hook also runs `cloud/takius-git.sh`: git authenticates on
-`git.takius.com.br` with the token (read from the environment, never written to disk) and every repository
-cloned from `github.com/andrermaia/<name>` gets a `takius` remote at `git.takius.com.br/andre/<name>.git`.
-Override with `TAKIUS_GIT_HOST`, `TAKIUS_GIT_OWNER`, `TAKIUS_GIT_USER`, `TAKIUS_GITHUB_OWNER`.
+With `TAKIUS_GIT_HOST` and `TAKIUS_GIT_TOKEN`, the `SessionStart` hook also runs `cloud/takius-git.sh`: git
+authenticates on that host with the token (read from the environment, never written to disk) and every
+repository cloned from `github.com/andrermaia/<name>` gets a `takius` remote at `<host>/andre/<name>.git`.
+Override with `TAKIUS_GIT_OWNER`, `TAKIUS_GIT_USER`, `TAKIUS_GITHUB_OWNER`.
 - **Setup script**:
 
   ```bash

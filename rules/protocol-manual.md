@@ -8,7 +8,7 @@ CLI (written `ctx` below): `node {{CLI}}`
 
 Always pass `--project <id>`, one of: louza, qlave, qoincamera, qoinpass, qoinmsg, qoinpay, qpoker, qoinstore, qoinsite, qoinmodel, qoinreviews, projetos.
 
-The knowledge base is shared on the Takius server (`https://api.takius.com.br/v1/context`); the CLI targets it by default, so do not pass `--api-url`. Authentication is the `CONTEXT_API_TOKEN` environment variable. If the API is down, reads fall back to the local cache with a warning and writes fail on purpose: report the outage to the user and never use `--no-api`.
+The knowledge base is shared on a server (`CONTEXT_API_URL`, from the environment or the `env` block of `.claude/settings.local.json`); the CLI targets it by default, so do not pass `--api-url`. Authentication is the `CONTEXT_API_TOKEN` environment variable. If the API is down, reads fall back to the local cache with a warning and writes fail on purpose: report the outage to the user and never use `--no-api`.
 
 1. **Etapa 1/3 · Contexto**: `ctx list-modules --project <project>`, then `ctx query --project <project> --module <module>`. In doubt, search before asking: `ctx search <English keywords> --project <project>` (`--all` spans every project).
 2. **Etapa 2/3 · Tarefa**: `ctx task-start --project <project> --module <module> --desc "<user request>"` and keep the returned `TASK-...` id. On long operations: `ctx task-step --project <project> --id <TASK_ID> --step "<step>"`.

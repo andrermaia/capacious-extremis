@@ -33,7 +33,7 @@ Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_f
 ## Target Selection (`--project`)
 
 - Always pass `--project <id>`. The knowledge base holds one row set per project (`louza`, `qlave`, `qoincamera`, `qoinpass`, `qoinmsg`, `qoinpay`, `qpoker`, `qoinstore`, `qoinsite`, `qoinmodel`, `qoinreviews`, `projetos`); the default is the working-directory basename, which is usually wrong from a sub-folder.
-- **The CLI talks to the shared API by default** — `https://api.takius.com.br/v1/context`, PostgreSQL `agent_context` on the Takius server. No `--api-url` needed; set `CONTEXT_API_TOKEN` (the API answers 401 without it).
+- **The CLI talks to the shared API by default** — the address in `CONTEXT_API_URL` (environment, or the `env` block of `<root>/.claude/settings.local.json` / `~/.claude/settings.json`; `scripts/api-config.mjs`), PostgreSQL behind it. No `--api-url` needed; set `CONTEXT_API_TOKEN` next to it (the API answers 401 without it). There is no default address: this repository is public.
 - `.agents/context.db` is now only a **read-only cache**, refreshed by `context-cli.mjs pull`. When the API is down, reads fall back to it with a warning on stderr and **writes fail loudly** — that is deliberate: writing locally would fork the shared memory in silence. `--no-api` forces the local file for both, and is an explicit offline decision, not a workaround for an outage.
 
 ## Enforcement via Claude Code Hooks
@@ -219,8 +219,8 @@ Before delivering your final response to the user:
 
 The backend is abstracted by `context-cli.mjs`. Since 2026-09-18 the source of truth is remote:
 
-1. **Shared API (default)** — `https://api.takius.com.br/v1/context`, served by the `context_api` Swarm
-   stack on the Takius server against the PostgreSQL database `agent_context`. Every agent on any
+1. **Shared API (default)** — the address in `CONTEXT_API_URL`, served by the `context_api` Swarm
+   stack against the PostgreSQL database `agent_context`. Every agent on any
    machine reads and writes the same rows. Requires `CONTEXT_API_TOKEN`; override the URL with
    `CONTEXT_API_URL` or `--api-url`. Source lives in `context-api/` (server, Dockerfile, stack.yml).
 

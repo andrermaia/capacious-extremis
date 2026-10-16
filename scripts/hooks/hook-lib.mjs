@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { configuredApiUrl } from '../api-config.mjs';
 
 export const STAGE = {
   CONTEXT: 'Etapa 1/3 · Contexto',
@@ -15,8 +16,10 @@ export const STAGE = {
 export const CLI = 'node .agents/skills/managing-system-context/scripts/context-cli.mjs';
 export const DEFAULT_MODULE = 'general';
 
+// The API address comes from the machine's configuration (scripts/api-config.mjs), never from
+// this public repository; '' when none is configured, and then the hooks stay silent.
 export function apiUrl() {
-  return process.env.CONTEXT_API_URL || 'https://api.takius.com.br/v1/context';
+  return configuredApiUrl() || '';
 }
 
 // Projects that exist in the central knowledge base. Folder prefixes map to them.

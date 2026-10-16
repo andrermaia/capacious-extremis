@@ -22,6 +22,14 @@ if (input.agent_id) process.exit(0);
 
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
+if (!apiUrl()) {
+  // The address is configuration, not code (the repository is public): say once how to set it.
+  emit({
+    systemMessage: '⚠️ Base de conhecimento desligada: CONTEXT_API_URL não configurada nesta máquina',
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '[managing-system-context] CONTEXT_API_URL não está configurada (ambiente ou bloco "env" de <raiz>/.claude/settings.local.json): a base compartilhada está desligada nesta sessão e os hooks não fazem nada. Avise o usuário; não use --no-api.' },
+  });
+  process.exit(0);
+}
 const { project, folder } = detectProject(input, root);
 const url = apiUrl();
 const state = loadState(input.session_id);
