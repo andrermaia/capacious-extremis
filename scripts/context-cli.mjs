@@ -92,6 +92,15 @@ function readJsonInput(file, what) {
   }
 }
 
+// Rows saved without Portuguese keywords are harder to find from a request in
+// Portuguese: the answer names them and stderr says how to add them.
+function keywordsWarning(ids) {
+  if (!ids.length) return {};
+  process.stderr.write(`[context-cli] ${ids.length} item(s) sem keywords em português: ${ids.join(', ')}. ` +
+    'Inclua "keywords" no upsert ou rode: context-cli keywords --file -\n');
+  return { sem_keywords: ids, aviso: 'Itens sem keywords em português: a busca automática os acha pior. Use keywords --file -.' };
+}
+
 const VALID_TYPES = ['architecture_decision', 'system_model', 'current_behavior', 'future_revision', 'technical_debt'];
 const VALID_PHASES = ['implemented', 'in_progress', 'queued', 'deprioritized'];
 
@@ -355,7 +364,7 @@ async function main() {
             }, apiToken);
             results.push({ id: item.id, action: data.action });
           }
-          console.log(JSON.stringify({ status: 'ok', count: results.length, results }, null, 2));
+          console.log(JSON.stringify({ status: 'ok', count: results.length, results, ...keywordsWarning(batch.filter((i) => !i.keywords).map((i) => i.id)) }, null, 2));
           return;
         }
         const id = options.id || options.args[1];
@@ -381,7 +390,7 @@ async function main() {
           method: 'POST',
           body: JSON.stringify(body)
         }, apiToken);
-        console.log(JSON.stringify(data, null, 2));
+        console.log(JSON.stringify({ ...data, ...keywordsWarning(body.keywords ? [] : [body.id]) }, null, 2));
         return;
       }
 
@@ -571,7 +580,7 @@ async function main() {
         `);
         const now = new Date().toISOString();
         for (const i of batch) stmt.run(i.id, projectId, i.module, i.feature, i.type, i.phase, i.progress, i.summary, i.details, i.keywords, now);
-        console.log(JSON.stringify({ status: 'ok', count: batch.length, results: batch.map((i) => ({ id: i.id, action: 'upserted' })) }, null, 2));
+        console.log(JSON.stringify({ status: 'ok', count: batch.length, results: batch.map((i) => ({ id: i.id, action: 'upserted' })), ...keywordsWarning(batch.filter((i) => !i.keywords).map((i) => i.id)) }, null, 2));
         break;
       }
       const id = options.id || options.args[1];
@@ -619,7 +628,7 @@ async function main() {
       `);
 
       stmt.run(id, projectId, module, feature, knowledgeType, phase, progress, summary, details, normalizeKeywords(options.keywords), now);
-      console.log(JSON.stringify({ status: 'ok', id, action: 'upserted' }, null, 2));
+      console.log(JSON.stringify({ status: 'ok', id, action: 'upserted', ...keywordsWarning(normalizeKeywords(options.keywords) ? [] : [id]) }, null, 2));
       break;
     }
 

@@ -6,7 +6,7 @@
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
   runCliAsync, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
-  guessModule, searchWords, hitsBlock, protocolText, apiUrl, STAGE,
+  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, STAGE,
 } from './hook-lib.mjs';
 
 // A task left open longer than this belongs to an old turn (resumed session): close it.
@@ -22,6 +22,7 @@ const url = apiUrl();
 const notice = /^\s*<task-notification>/.test(String(input.prompt || ''));
 const prompt = notice ? 'aviso de tarefa em segundo plano' : cleanPrompt(input.prompt);
 const state = loadState(input.session_id);
+const trivial = !notice && isTrivialPrompt(input.prompt);
 
 // The session-start hook already showed the module list: then the prompt hook skips it
 // (and the list-modules call) and uses the cached list to pick the task module.
@@ -41,7 +42,9 @@ const closing = stale.map((t) =>
 
 let module = current?.module;
 let taskRun;
-if (current) {
+if (trivial && !current) {
+  taskRun = Promise.resolve({ ok: true, data: null, skipped: true });
+} else if (current) {
   taskRun = runCliAsync(root, ['task-step', '--project', project, '--id', current.id, '--step', notice ? prompt : `novo pedido: ${prompt || '(sem texto)'}`, '--api-url', url], { timeoutMs: 8000 });
 } else {
   // First prompt ever for this project: wait for the module list to pick the module.
@@ -52,7 +55,7 @@ if (current) {
 
 // The agent's first move used to be a query/search turn that re-read the whole context:
 // the hook searches the base with the prompt's words instead, in parallel.
-const words = notice ? [] : searchWords(prompt);
+const words = notice || trivial ? [] : searchWords(prompt);
 const searching = words.length
   ? runCliAsync(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
   : null;
@@ -69,7 +72,7 @@ let taskError = null;
 if (!current) {
   taskId = task.ok ? task.data?.id : null;
   if (taskId) recordTask(state, { id: taskId, module, project, by: 'on-prompt' });
-  else taskError = task.error || 'task-start sem id na resposta';
+  else if (!task.skipped) taskError = task.error || 'task-start sem id na resposta';
 }
 
 state.project = project;
@@ -77,15 +80,17 @@ state.source = result.source;
 state.apiUrl = result.apiUrl;
 state.contextQueried = true;
 state.lastModule = module;
-if (!notice) state.lastDesc = prompt;
-state.turn = { promptId: input.prompt_id || null, upserts: 0, reminded: false, startedAt: new Date().toISOString() };
+if (!notice && !trivial) state.lastDesc = prompt;
+state.turn = { promptId: input.prompt_id || null, upserts: 0, reminded: false, startedAt: new Date().toISOString(), trivial, prompt };
 saveState(input.session_id, state);
 
 const moduleLine = modules.length
   ? modules.map((m) => `${m.module} (${m.total_count})`).join(', ')
   : '(nenhum módulo cadastrado — rode bootstrap-scan ou init)';
 
-const taskLine = taskId
+const taskLine = trivial && !taskId
+  ? 'Pedido curto: sem tarefa nem busca (se houver trabalho, o hook registra a tarefa ao fim do turno).'
+  : taskId
   ? `Tarefa ${taskId} (módulo ${module}) aberta pelo hook; ele a fecha ao fim do turno.`
   : `⚠️ A tarefa NÃO foi aberta (${String(taskError).slice(0, 120)}). A base compartilhada parece fora do ar: avise o usuário; as edições ficam bloqueadas até ela voltar. Não use --no-api.`;
 // This session's own tasks are what the agent is doing right now: never a hit.
@@ -102,7 +107,7 @@ const context = [
 
 emit({
   systemMessage: `📚 ${STAGE.CONTEXT} · projeto ${project}${hits.length ? ` · ${hits.length - 1} item(ns) da base` : ''} · ` +
-    (taskId ? `🟢 ${STAGE.TASK} · ${taskId}${current ? ' (continuação)' : ''}` : '⚠️ tarefa não aberta'),
+    (taskId ? `🟢 ${STAGE.TASK} · ${taskId}${current ? ' (continuação)' : ''}` : trivial ? 'pedido curto, sem tarefa' : '⚠️ tarefa não aberta'),
   hookSpecificOutput: {
     hookEventName: 'UserPromptSubmit',
     additionalContext: context,

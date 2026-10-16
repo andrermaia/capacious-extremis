@@ -8,7 +8,7 @@
 // unreachable the task stays open and the next prompt continues it.
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, apiUrl,
-  finalAnswer, outcomeLine, turnCliCalls, STAGE,
+  finalAnswer, outcomeLine, turnCliCalls, recordTask, STAGE,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
@@ -18,13 +18,23 @@ const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
 
 const state = loadState(input.session_id);
-const { upserts, finished } = turnCliCalls(input);
+const { upserts, finished, toolUses } = turnCliCalls(input);
 // Tasks the agent closed itself (BLOCKED, or DONE by habit) keep their status.
 for (const f of finished) {
   const task = (state.tasks || []).find((t) => t.id === f.id);
   if (task) Object.assign(task, { finished: true, finishedBy: `agent (${f.status})` });
 }
-const open = openTasks(state);
+let open = openTasks(state);
+// A short prompt ("sim, pode") opened no task; if the turn did work after all, record it now.
+if (!open.length && state.turn?.trivial && toolUses > 0) {
+  const project = state.project || detectProject(input, root).project;
+  const desc = `${state.turn.prompt || 'pedido curto'}${state.lastDesc ? ` (continuação: ${state.lastDesc})` : ''}`.slice(0, 200);
+  const started = await runCliAsync(root, ['task-start', '--project', project, '--module', state.lastModule || 'general', '--desc', desc, '--api-url', apiUrl()], { timeoutMs: 7000 });
+  if (started.ok && started.data?.id) {
+    recordTask(state, { id: started.data.id, module: state.lastModule || 'general', project, by: 'on-stop (pedido curto)' });
+    open = openTasks(state);
+  }
+}
 if (!open.length && !upserts) {
   saveState(input.session_id, state);
   process.exit(0);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -209,4 +209,18 @@ test('CLI: Portuguese keywords make an English summary findable; keywords --file
   assert.equal(after.updated_at, before);
   assert.equal(runCli(['search', 'recital']).knowledge[0].id, 'K-2');
   assert.equal(runCli(['get', 'K-1']).keywords, 'férias, faltas');
+});
+
+test('CLI: an upsert without keywords says so (answer and stderr)', () => {
+  runCli(['init']);
+  const r = spawnSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', 'upsert', '--file', '-'], {
+    input: JSON.stringify([
+      { id: 'W-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'No keywords here' },
+      { id: 'W-2', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'Has them', keywords: 'cota, recital' },
+    ]), encoding: 'utf8',
+  });
+  assert.deepEqual(JSON.parse(r.stdout).sem_keywords, ['W-1']);
+  assert.match(r.stderr, /1 item\(s\) sem keywords em português: W-1/);
+  const single = runCli(['upsert', '--id', 'W-3', '--module', 'm', '--feature', 'f', '--type', 'current_behavior', '--phase', 'implemented', '--summary', 's', '--keywords', 'a, b']);
+  assert.equal(single.sem_keywords, undefined);
 });

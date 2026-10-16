@@ -49,6 +49,8 @@ Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_f
 
 Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json` (written atomically); the last module list per project is cached next to it as `modules-<project>.json`. Edits made through shell commands (`sed`, heredocs) skip the edit guard, which only matters for the reminder: the task is already open.
 
+Short acknowledgements (`ok`, `sim, pode`, `valeu`) open no task and search nothing; if the turn ends up using tools, the Stop hook opens, records and closes its task then. The session-start hook also refreshes the local read-only cache (`pull`) at most once a week, in the background, so reads during an API outage are never older than a week. `upsert` names the items saved without Portuguese `keywords` (answer field `sem_keywords` and stderr).
+
 When the session-start hook ran, the prompt hook no longer repeats the module list (nor calls `list-modules`).
 
 Record knowledge in **one call**: `context-cli upsert --project <p> --file -` reads a JSON array of `{id, module, feature, type, phase, progress?, summary, details?}` from stdin.

@@ -42,7 +42,8 @@ function fakeApi() {
         tasks: () => tasks.filter((t) => t.project_id === project && (!url.searchParams.get('status') || t.status === url.searchParams.get('status')))
           .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
         query: () => (url.searchParams.get('phase') === 'in_progress'
-          ? [{ id: 'LOUZA-WIP-1', module: 'louza', phase: 'in_progress', tasks_progress: '02/05', summary: 'Rematricula 2027 half done' }] : []),
+          ? [{ id: 'LOUZA-WIP-1', module: 'louza', phase: 'in_progress', tasks_progress: '02/05', summary: 'Rematricula 2027 half done', updated_at: now() },
+            { id: 'OLD-WIP', module: 'louza', phase: 'in_progress', summary: 'Untouched for a month', updated_at: '2026-01-01T00:00:00Z' }] : []),
         upsert: () => ({ status: 'ok', id: json.id, action: 'inserted' }),
         search: () => {
           const words = String(url.searchParams.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -242,10 +243,11 @@ test('session start brings modules, other sessions\' work, recent results and in
   const out = await sessionStart('s11');
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
-  assert.match(ctx, /Módulos: louza \(3\), agent-context \(2\)/);
+  assert.match(ctx, /Módulos: louza, agent-context\n/);
   assert.match(ctx, /Em andamento em outras sessões[\s\S]*TASK-FAKE1-1 · louza · .* · ajustar o boletim do louza/);
   assert.match(ctx, /Resultados recentes:\n- .* · corrigir a rematrícula → Feito Corrigi a rematrícula de 2027: três contratos voltaram ao convênio\./);
   assert.match(ctx, /LOUZA-WIP-1 \(02\/05\) · Rematricula 2027 half done/);
+  assert.doesNotMatch(ctx, /OLD-WIP/);
   assert.match(ctx, /PROTOCOLO \(as etapas aparecem na tela pelos hooks; não as narre\)/);
   assert.match(ctx, /search <palavras em inglês>/);
   assert.ok(state('s11').sessionContext);
@@ -330,4 +332,27 @@ test('a background-task notification continues the task without searching the ba
   assert.equal(api.routes('tasks/step').at(-1).body.step, 'aviso de tarefa em segundo plano');
   assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /Da base/);
   assert.equal(state('s16').lastDesc, 'corrija o boletim do louza');
+});
+
+test('a short acknowledgement opens no task and searches nothing; if the turn works, on-stop records it', async () => {
+  await sessionStart('s17');
+  await prompt('s17', 'corrija o boletim do louza');
+  await stop('s17');
+  const starts = api.routes('tasks/start').length;
+  const searches = api.routes('search').length;
+  const out = await prompt('s17', 'Sim, pode!');
+  assert.equal(api.routes('tasks/start').length, starts);
+  assert.equal(api.routes('search').length, searches);
+  assert.match(out.hookSpecificOutput.additionalContext, /Pedido curto: sem tarefa nem busca/);
+  // The turn did work (a Bash call): on-stop opens, records and closes the task.
+  const file = transcript('s17', [['ls', 'a']]);
+  const done = await stopWith('s17', file);
+  const start = api.routes('tasks/start').at(-1);
+  assert.equal(api.routes('tasks/start').length, starts + 1);
+  assert.equal(start.body.desc, 'Sim, pode! (continuação: corrija o boletim do louza)');
+  assert.match(done.systemMessage, /fechada\(s\)/);
+  // A short prompt with no work leaves nothing behind.
+  await prompt('s17', 'valeu');
+  await stopWith('s17', transcript('s17b', []));
+  assert.equal(api.routes('tasks/start').length, starts + 1);
 });

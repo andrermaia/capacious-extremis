@@ -12,10 +12,10 @@ import {
   saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, CLI,
 } from './hook-lib.mjs';
 
-const SYNC_EVERY_MS = 10 * 60 * 1000;
-const HYGIENE_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
-const RECENT_MS = 48 * 60 * 60 * 1000;
-const BLOCKED_MS = 14 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RECENT_MS = 2 * DAY_MS;
+const BLOCKED_MS = 14 * DAY_MS;
+const ITEM_MS = 14 * DAY_MS;
 
 const input = readStdinJson();
 if (input.agent_id) process.exit(0);
@@ -27,8 +27,11 @@ const url = apiUrl();
 const state = loadState(input.session_id);
 const read = (args) => runCliAsync(root, [...args, '--project', project, '--api-url', url], { timeoutMs: 8000 });
 
-refreshRules();
-runHygieneWeekly();
+// Background jobs, detached and throttled across sessions by stamp files.
+inBackground('sync-rules', 10 * 60 * 1000, [scriptPath('sync-rules.mjs'), '--quiet']);
+inBackground('hygiene', 7 * DAY_MS, [scriptPath('hygiene.mjs'), '--fix', '--save', '--quiet']);
+// The local cache is what reads fall back to when the API is unreachable: keep it a week fresh at most.
+inBackground('pull', 7 * DAY_MS, [scriptPath('context-cli.mjs'), 'pull']);
 
 const [modulesRaw, open, blocked, done, inProgress, hygiene] = await Promise.all([
   read(['list-modules']),
@@ -55,21 +58,21 @@ const cut = (s, n) => {
 const mine = new Set((state.tasks || []).map((t) => t.id));
 const fresh = (t, ms) => now - Date.parse(t.updated_at) < ms && !mine.has(t.id);
 const realStep = (t) => t.current_step && t.current_step !== 'Task started';
-const taskLine = (t) => `- ${t.id} · ${t.module} · ${age(t.updated_at)} · ${cut(t.task_description, 90)}${realStep(t) ? ` — ${cut(t.current_step, 90)}` : ''}`;
+const taskLine = (t) => `- ${t.id} · ${t.module} · ${age(t.updated_at)} · ${cut(t.task_description, 70)}${realStep(t) ? ` — ${cut(t.current_step, 70)}` : ''}`;
 
 const sections = [];
-const openNow = rows(open).filter((t) => fresh(t, RECENT_MS)).slice(0, 5);
+const openNow = rows(open).filter((t) => fresh(t, RECENT_MS)).slice(0, 4);
 if (openNow.length) sections.push('Em andamento em outras sessões (48 h):', ...openNow.map(taskLine));
 const stuck = rows(blocked).filter((t) => fresh(t, BLOCKED_MS)).slice(0, 3);
 if (stuck.length) sections.push('Bloqueadas (14 dias):', ...stuck.map(taskLine));
-const results = rows(done).filter((t) => /^resultado:/i.test(t.current_step || '')).slice(0, 5);
+const results = rows(done).filter((t) => /^resultado:/i.test(t.current_step || '')).slice(0, 3);
 if (results.length) {
   sections.push('Resultados recentes:',
-    ...results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 70)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 150)}`));
+    ...results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`));
 }
-const pending = rows(inProgress).slice(0, 8);
+const pending = rows(inProgress).filter((k) => now - Date.parse(k.updated_at) < ITEM_MS).slice(0, 4);
 if (pending.length) {
-  sections.push('Itens em andamento na base:', ...pending.map((k) => `- ${k.id}${k.tasks_progress ? ` (${k.tasks_progress})` : ''} · ${cut(k.summary, 140)}`));
+  sections.push('Itens em andamento na base (14 dias):', ...pending.map((k) => `- ${k.id}${k.tasks_progress ? ` (${k.tasks_progress})` : ''} · ${cut(k.summary, 110)}`));
 }
 
 // The weekly hygiene report, while it still has findings.
@@ -82,7 +85,7 @@ state.sessionContext = { at: new Date().toISOString(), source: input.source || '
 saveState(input.session_id, state);
 
 const moduleLine = modules.length
-  ? modules.map((m) => `${m.module} (${m.total_count})`).join(', ')
+  ? modules.map((m) => m.module).join(', ')
   : '(nenhum módulo cadastrado — rode bootstrap-scan ou init)';
 const context = [
   `[managing-system-context] Início de sessão · projeto ${project} (pasta ${folder}) · fonte ${listing.source === 'api' ? 'API' : 'cache local (somente leitura)'}${listing.apiError ? ` — API indisponível: ${cut(listing.apiError, 100)}` : ''}.`,
@@ -97,29 +100,16 @@ emit({
   hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
 });
 
-// Weekly, detached: closes week-old open tasks as BLOCKED and saves the report (HYGIENE-REPORT).
-function runHygieneWeekly() {
+// Runs a script detached, at most once per `everyMs` across all sessions (stamp file);
+// the session never waits for it. CONTEXT_SYNC_RULES=0 turns every background job off (tests).
+function inBackground(name, everyMs, args) {
   if (process.env.CONTEXT_SYNC_RULES === '0') return;
-  const stamp = path.join(path.dirname(stateFile('hygiene')), 'hygiene.stamp');
+  const stamp = path.join(path.dirname(stateFile(name)), `${name}.stamp`);
   try {
-    if (Date.now() - fs.statSync(stamp).mtimeMs < HYGIENE_EVERY_MS) return;
+    if (Date.now() - fs.statSync(stamp).mtimeMs < everyMs) return;
   } catch {}
   try {
     fs.writeFileSync(stamp, new Date().toISOString());
-    spawn(process.execPath, [scriptPath('hygiene.mjs'), '--fix', '--save', '--quiet'], { detached: true, stdio: 'ignore', windowsHide: true, env: cliEnv(root) }).unref();
-  } catch {}
-}
-
-// Keeps ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and friends in step with the rules in the
-// base. Detached, so the session never waits for it; throttled across sessions by a stamp file.
-function refreshRules() {
-  if (process.env.CONTEXT_SYNC_RULES === '0') return;
-  const stamp = path.join(path.dirname(stateFile('sync')), 'sync-rules.stamp');
-  try {
-    if (Date.now() - fs.statSync(stamp).mtimeMs < SYNC_EVERY_MS) return;
-  } catch {}
-  try {
-    fs.writeFileSync(stamp, new Date().toISOString());
-    spawn(process.execPath, [scriptPath('sync-rules.mjs'), '--quiet'], { detached: true, stdio: 'ignore', windowsHide: true, env: cliEnv(root) }).unref();
+    spawn(process.execPath, args, { cwd: root, detached: true, stdio: 'ignore', windowsHide: true, env: cliEnv(root) }).unref();
   } catch {}
 }

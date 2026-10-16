@@ -220,6 +220,10 @@ export function turnCliCalls(input) {
   }
   let upserts = 0;
   const finished = [];
+  let toolUses = 0;
+  for (const rec of tail.slice(start)) {
+    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) if (b?.type === 'tool_use') toolUses++;
+  }
   for (const [id, command] of commands) {
     const bare = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
     const out = results.get(id) || '';
@@ -232,7 +236,7 @@ export function turnCliCalls(input) {
       }
     }
   }
-  return { upserts, finished };
+  return { upserts, finished, toolUses };
 }
 
 export function finalAnswer(input) {
@@ -292,6 +296,20 @@ const STOP_WORDS = new Set(('a o as os um uma uns umas de do da dos das em no na
   'me te nos lhe meu minha seu sua nosso nossa ao aos pelo pela pelos pelas qual quais quando onde porque porquê quem ' +
   'ser estar ter fazer faca faça pode posso preciso quero queria gostaria favor por-favor agora hoje tambem também ainda ' +
   'the and for with from that this what how why when where can could should would please make have has').split(' '));
+
+// Short acknowledgements ("ok", "sim, pode", "valeu!") carry nothing to search and often no
+// work at all: the prompt hook opens no task for them (the Stop hook records one if the turn
+// ends up using tools).
+const TRIVIAL = new Set(('ok okay okk sim não nao obrigado obrigada obg valeu vlw beleza blz certo perfeito show top ' +
+  'ótimo otimo entendi isso pode segue continue continua siga vai bora manda fechado combinado bom boa dia tarde noite ' +
+  'oi olá ola tudo bem legal massa claro exato verdade thanks thx yes no').split(' '));
+
+export function isTrivialPrompt(prompt) {
+  const text = String(prompt || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+  if (!text || text.length > 30) return false;
+  const words = text.split(/\s+/);
+  return words.length <= 4 && words.every((w) => TRIVIAL.has(w));
+}
 
 export function searchWords(prompt) {
   const words = String(prompt || '').toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_.-]*/gu) || [];
