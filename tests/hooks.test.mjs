@@ -18,6 +18,7 @@ function fakeApi() {
   let down = false;
   let hygieneReport = null;
   let pathsRows = [];
+  let digestReply = null;
   let n = 0;
   const task = (id) => tasks.find((t) => t.id === id) || {};
   const server = http.createServer((req, res) => {
@@ -47,6 +48,7 @@ function fakeApi() {
             { id: 'OLD-WIP', module: 'louza', phase: 'in_progress', summary: 'Untouched for a month', updated_at: '2026-01-01T00:00:00Z' }] : []),
         upsert: () => ({ status: 'ok', id: json.id, action: 'inserted' }),
         paths: () => (req.method === 'GET' ? pathsRows : { status: 'ok', updated: (json.items || []).length, missing: [] }),
+        digest: digestReply ? () => digestReply : undefined,
         search: () => {
           const words = String(url.searchParams.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
           const rows = [
@@ -81,6 +83,7 @@ function fakeApi() {
     setDown: (v) => { down = v; },
     setHygiene: (r) => { hygieneReport = r; },
     setPaths: (rows) => { pathsRows = rows; },
+    setDigest: (r) => { digestReply = r; },
     close: () => server.close(),
   })));
 }
@@ -431,4 +434,76 @@ test('commits whose subject holds two of the words come with the hits; weaker on
   assert.equal(api.routes('search')[0].query.commits, '3');
   assert.match(ctx, /- commit louza@abc1234 · 2026-10-01 · fix\(boletim\): media ponderada do louza/);
   assert.doesNotMatch(ctx, /def9999/);
+});
+
+test('session start shows the week\'s digest and the drafts to confirm in place of the module list', async () => {
+  api.setDigest({
+    days: 7, counts: { louza: 12, projetos: 3 },
+    changed: [{ project_id: 'louza', id: 'DEC-BOLETIM', summary: 'Trimester closes by weighted mean', updated_at: '2026-10-15T00:00:00Z' }],
+    drafts: [{ project_id: 'louza', id: 'DRAFT-ABC-1', summary: 'Rascunho: ajustar a parcela → feito', updated_at: '2026-10-15T00:00:00Z' }],
+    drafts_total: 1,
+  });
+  const out = await sessionStart('s40');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /Novidades da base \(7 dias · louza 12, projetos 3\):\n- louza\/DEC-BOLETIM · Trimester closes by weighted mean/);
+  assert.match(ctx, /Rascunhos a confirmar \(1; [^)]*\):\n- louza\/DRAFT-ABC-1 · Rascunho: ajustar a parcela/);
+  assert.match(ctx, /"supersedes":"<ID do rascunho>"/);
+  assert.doesNotMatch(ctx, /Módulos:/);
+  // At the root the digest spans every project.
+  assert.equal(api.routes('digest')[0].query.project, undefined);
+  assert.equal(api.routes('modules').length, 1); // still fetched: the prompt hook guesses modules from its cache
+});
+
+test('inside a product the digest covers that product and the cross-project rows', async () => {
+  api.setDigest({ days: 7, counts: {}, changed: [], drafts: [], drafts_total: 0 });
+  fs.mkdirSync(path.join(ws.root, 'louza-fe'), { recursive: true });
+  await runHook(ws, api, 'on-session-start.mjs', { session_id: 's41', hook_event_name: 'SessionStart', source: 'startup', cwd: path.join(ws.root, 'louza-fe') });
+  assert.equal(api.routes('digest')[0].query.project, 'louza,projetos');
+});
+
+function workTranscript(name, file, { tools = 5, upsert = false } = {}) {
+  const lines = [{ type: 'user', message: { role: 'user', content: 'pedido' } }];
+  for (let i = 0; i < tools - 1; i++) {
+    lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `r${i}`, name: 'Read', input: { file_path: file } }] } });
+    lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `r${i}`, content: 'x' }] } });
+  }
+  lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: file, old_string: 'a', new_string: 'b' } }] } });
+  lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'ok' }] } });
+  if (upsert) {
+    lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'u1', name: 'Bash', input: { command: 'node context-cli.mjs upsert --project louza --file - <<EOF\n[{"id":"X-1"}]\nEOF' } }] } });
+    lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: '{"status":"ok","results":[{"id":"X-1","action":"inserted"}]}' }] } });
+  }
+  lines.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'Ajustei a parcela de hora extra.' }] } });
+  const t = path.join(ws.base, `${name}.jsonl`);
+  fs.writeFileSync(t, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return t;
+}
+
+test('a turn that edited files and saved nothing leaves a draft for the next session', async () => {
+  await prompt('s42', 'ajustar a parcela de hora extra do louza');
+  fs.mkdirSync(path.join(ws.root, 'louza', '.git'), { recursive: true });
+  const file = path.join(ws.root, 'louza', 'src', 'parcela.service.ts');
+  const out = await stopWith('s42', workTranscript('s42', file));
+  const draft = api.routes('upsert').find((c) => c.body.module === 'drafts');
+  assert.equal(draft.project, 'louza');
+  assert.equal(draft.body.id, 'DRAFT-FAKE1-1');
+  assert.equal(draft.body.phase, 'queued');
+  assert.equal(draft.body.no_similar, true);
+  assert.match(draft.body.summary, /^Rascunho: ajustar a parcela de hora extra do louza → Ajustei a parcela de hora extra\./);
+  assert.match(draft.body.details, /Arquivos editados: src\/parcela\.service\.ts/);
+  assert.match(draft.body.keywords, /parcela/);
+  const link = api.routes('paths').find((c) => c.method === 'POST');
+  assert.deepEqual(link.body.items, [{ id: 'DRAFT-FAKE1-1', paths: ['src/parcela.service.ts'], mode: 'append' }]);
+  assert.match(out.systemMessage, /rascunho louza\/DRAFT-FAKE1-1 para confirmar/);
+});
+
+test('no draft for a quick fix, for a turn that saved its knowledge, or for files outside the root', async () => {
+  const inRoot = path.join(ws.root, 'louza', 'src', 'a.ts');
+  await prompt('s43', 'pedido');
+  await stopWith('s43', workTranscript('s43', inRoot, { tools: 2 }));
+  await prompt('s44', 'pedido');
+  await stopWith('s44', workTranscript('s44', inRoot, { upsert: true }));
+  await prompt('s45', 'pedido');
+  await stopWith('s45', workTranscript('s45', path.join(ws.base, 'fora', 'b.ts')));
+  assert.equal(api.routes('upsert').filter((c) => c.body.module === 'drafts').length, 0);
 });

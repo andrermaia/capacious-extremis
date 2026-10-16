@@ -35,7 +35,9 @@ inBackground('pull', 7 * DAY_MS, [scriptPath('context-cli.mjs'), 'pull']);
 // Commits of the repositories under the root, so a search finds what changed and when.
 inBackground('commits', 6 * 60 * 60 * 1000, [scriptPath('ingest-commits.mjs'), '--root', root, '--quiet']);
 
-const [modulesRaw, open, blocked, done, inProgress, hygiene, pathsIndex] = await Promise.all([
+// At the root the digest spans every project; inside a product, that product and the cross-project rows.
+const digestScope = project === path.basename(root).toLowerCase() ? '' : `project=${encodeURIComponent(`${project},projetos`)}&`;
+const [modulesRaw, open, blocked, done, inProgress, hygiene, pathsIndex, digest] = await Promise.all([
   read(['list-modules']),
   read(['list-tasks', '--status', 'IN_PROGRESS', '--limit', '30']),
   read(['list-tasks', '--status', 'BLOCKED', '--limit', '10']),
@@ -43,6 +45,7 @@ const [modulesRaw, open, blocked, done, inProgress, hygiene, pathsIndex] = await
   read(['query', '--phase', 'in_progress']),
   callApi(root, ['get', 'HYGIENE-REPORT', '--project', 'global', '--api-url', url], { timeoutMs: 8000 }),
   apiRequest(root, 'GET', 'paths', null, { timeoutMs: 8000 }),
+  apiRequest(root, 'GET', `digest?${digestScope}days=7&limit=8`, null, { timeoutMs: 8000 }),
 ]);
 // The edit hook's file radar reads this index locally (no network at edit time).
 if (pathsIndex.ok && Array.isArray(pathsIndex.data)) savePathsIndex(pathsIndex.data);
@@ -92,9 +95,25 @@ saveState(input.session_id, state);
 const moduleLine = modules.length
   ? modules.map((m) => m.module).join(', ')
   : '(nenhum módulo cadastrado — rode bootstrap-scan ou init)';
+// What changed in the base this week replaces the module list (list-modules still has it): a
+// handful of decisions and debts, and the drafts the Stop hook left for confirmation.
+const week = [];
+if (digest.ok && digest.data?.counts) {
+  const counts = Object.entries(digest.data.counts).map(([p, n]) => `${p} ${n}`).join(', ');
+  if (digest.data.changed?.length) {
+    week.push(`Novidades da base (${digest.data.days} dias · ${counts}):`,
+      ...digest.data.changed.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 120)}`));
+  }
+  if (digest.data.drafts?.length) {
+    week.push(`Rascunhos a confirmar (${digest.data.drafts_total}; trabalho que terminou sem upsert):`,
+      ...digest.data.drafts.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 110)}`),
+      'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela).');
+  }
+}
 const context = [
   `[managing-system-context] Início de sessão · projeto ${project} (pasta ${folder}) · fonte ${listing.source === 'api' ? 'API' : 'cache local (somente leitura)'}${listing.apiError ? ` — API indisponível: ${cut(listing.apiError, 100)}` : ''}.`,
-  `Módulos: ${moduleLine}`,
+  ...(digest.ok && digest.data?.counts ? [] : [`Módulos: ${moduleLine}`]),
+  ...(week.length ? ['', ...week] : []),
   ...(sections.length ? ['', ...sections] : []),
   '',
   protocolText(project),

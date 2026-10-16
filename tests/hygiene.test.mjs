@@ -60,3 +60,16 @@ test('project facts in a memory folder are found; references and the index are n
   assert.deepEqual(memoryFacts(home).map((f) => path.basename(f)).sort(), ['gotcha_x.md', 'notes.md']);
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+test('drafts are listed to confirm and never checked as rows (language, duplicates, keywords)', async () => {
+  const { analyse, render } = await import('../scripts/hygiene.mjs');
+  const knowledge = [
+    { id: 'DRAFT-1', project_id: 'louza', module: 'drafts', phase: 'queued', summary: 'Rascunho: não foi feito para a parcela que está pendente', updated_at: '2026-10-10T00:00:00Z' },
+    { id: 'DRAFT-2', project_id: 'louza', module: 'drafts', phase: 'deprioritized', summary: 'Rascunho: já confirmado', updated_at: '2026-10-10T00:00:00Z' },
+  ];
+  const f = analyse({ knowledge, tasks: [], now: Date.parse('2026-10-16T00:00:00Z') });
+  assert.deepEqual(f.drafts.map((d) => [d.id, d.days]), [['DRAFT-1', 6]]);
+  assert.equal(f.notEnglish.length, 0);
+  assert.equal(f.missingKeywords.length, 0);
+  assert.match(render(f), /## Rascunhos a confirmar[^\n]*\(1\)\n- louza\/DRAFT-1 · 6 d · Rascunho:/);
+});

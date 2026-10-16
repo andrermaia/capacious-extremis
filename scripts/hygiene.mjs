@@ -7,6 +7,7 @@
 //   - project facts written to a Claude Code memory folder (they belong in the base)
 //   - rules files that differ from the base (hand-edited or stale; sync-rules fixes them)
 //   - knowledge without Portuguese keywords (the prompt search finds it worse)
+//   - drafts the Stop hook left (work that ended without an upsert) still to confirm
 // --save stores the report in the base (project global, module hygiene, id HYGIENE-REPORT),
 // which the session-start hook shows while it has findings.
 // Usage: node hygiene.mjs [--fix] [--save] [--quiet]
@@ -76,8 +77,11 @@ export function memoryFacts(home = os.homedir()) {
   return found;
 }
 
-export function analyse({ knowledge, tasks, now = Date.now(), memory = [], rulesDrift = [] }) {
+export function analyse({ knowledge: all, tasks, now = Date.now(), memory = [], rulesDrift = [] }) {
   const age = (r) => (now - Date.parse(r.updated_at)) / DAY;
+  // Drafts are raw notes in Portuguese waiting for an agent: listed apart, never checked as rows.
+  const drafts = all.filter((k) => k.module === 'drafts' && k.phase !== 'deprioritized');
+  const knowledge = all.filter((k) => k.module !== 'drafts');
   return {
     staleKnowledge: knowledge.filter((k) => k.phase === 'in_progress' && age(k) >= LIMITS.staleKnowledgeDays)
       .map((k) => ({ id: k.id, project: k.project_id, days: Math.floor(age(k)), summary: k.summary })),
@@ -89,6 +93,7 @@ export function analyse({ knowledge, tasks, now = Date.now(), memory = [], rules
     rulesDrift,
     missingKeywords: knowledge.filter((k) => k.phase !== 'deprioritized' && !k.keywords && !SCANNER_ROW.test(k.summary || ''))
       .map((k) => ({ id: k.id, project: k.project_id })),
+    drafts: drafts.map((k) => ({ id: k.id, project: k.project_id, days: Math.floor(age(k)), summary: k.summary })),
   };
 }
 
@@ -107,6 +112,7 @@ export function render(findings, { fixed = 0, date = new Date() } = {}) {
     ...sec('Fatos de projeto na memória local (migrar com upsert e apagar)', findings.memoryFacts, (f) => `- ${f}`),
     ...sec('Arquivos de regras diferentes da base (rode sync-rules)', findings.rulesDrift, (f) => `- ${f}`),
     ...sec('Sem palavras-chave em português (context-cli keywords --file -)', findings.missingKeywords, (k) => `- ${k.project}/${k.id}`, 20),
+    ...sec('Rascunhos a confirmar (grave a linha real com "supersedes":"<ID>" ou descarte com phase deprioritized)', findings.drafts || [], (k) => `- ${k.project}/${k.id} · ${k.days} d · ${cut(k.summary, 110)}`, 20),
   ];
   return lines.join('\n').trim();
 }
@@ -114,7 +120,7 @@ export function render(findings, { fixed = 0, date = new Date() } = {}) {
 export function summaryLine(findings, { fixed = 0, date = new Date() } = {}) {
   const d = date.toISOString().slice(0, 10).split('-').reverse().join('/');
   const n = (k) => findings[k].length;
-  return `Hygiene ${d}: ${n('staleKnowledge')} stale in_progress, ${n('staleTasks')} stale tasks (${fixed} closed), ${n('duplicates')} duplicate pairs, ${n('notEnglish')} non-English, ${n('memoryFacts')} memory facts, ${n('rulesDrift')} rules drift, ${n('missingKeywords')} without keywords.`;
+  return `Hygiene ${d}: ${n('staleKnowledge')} stale in_progress, ${n('staleTasks')} stale tasks (${fixed} closed), ${n('duplicates')} duplicate pairs, ${n('notEnglish')} non-English, ${n('memoryFacts')} memory facts, ${n('rulesDrift')} rules drift, ${n('missingKeywords')} without keywords, ${(findings.drafts || []).length} drafts.`;
 }
 
 export const total = (f) => Object.values(f).reduce((a, l) => a + l.length, 0);
