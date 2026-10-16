@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -198,6 +197,9 @@ function getDatabase(dbPath) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+  // Loaded only when the local cache is used: node:sqlite prints an ExperimentalWarning on load,
+  // which every API call would otherwise carry into the agent's context.
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
   return new DatabaseSync(dbPath);
 }
 
