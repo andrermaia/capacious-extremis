@@ -292,7 +292,7 @@ export function protocolText(project) {
     `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
-    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>"}]',
+    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>"}]',
     '  EOF',
     `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
     'Subagentes ficam fora do protocolo: passe a eles o contexto e grave você o que descobrirem.',
@@ -370,12 +370,15 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     excerpts++;
     return [line, `  ↳ ${cut(k.excerpt, 420)}`];
   };
-  if (!knowledge.length && !tasks.length && !similar.length) return [];
+  // Commits whose subject holds two of the words (or one, for a one-word prompt): what changed and when.
+  const commits = (data?.commits || []).filter((c) => c.score >= Math.min(6, 3 * words.length)).slice(0, 2);
+  if (!knowledge.length && !tasks.length && !similar.length && !commits.length) return [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
     ...knowledge.flatMap((k, i) => withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, i < 2 && (k.score ?? 3 * k.hits) >= STRONG_SCORE)),
     ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
+    ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),
   ];
 }
 
@@ -480,7 +483,7 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;

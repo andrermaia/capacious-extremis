@@ -32,6 +32,8 @@ inBackground('sync-rules', 10 * 60 * 1000, [scriptPath('sync-rules.mjs'), '--qui
 inBackground('hygiene', 7 * DAY_MS, [scriptPath('hygiene.mjs'), '--fix', '--save', '--quiet']);
 // The local cache is what reads fall back to when the API is unreachable: keep it a week fresh at most.
 inBackground('pull', 7 * DAY_MS, [scriptPath('context-cli.mjs'), 'pull']);
+// Commits of the repositories under the root, so a search finds what changed and when.
+inBackground('commits', 6 * 60 * 60 * 1000, [scriptPath('ingest-commits.mjs'), '--root', root, '--quiet']);
 
 const [modulesRaw, open, blocked, done, inProgress, hygiene, pathsIndex] = await Promise.all([
   read(['list-modules']),

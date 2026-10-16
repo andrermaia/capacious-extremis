@@ -62,7 +62,11 @@ function fakeApi() {
           const semantic = [{ id: 'SEM-1', project_id: 'louza', module: 'louza', summary: 'Report card grades close by weighted mean', similarity: 0.87 },
             { id: 'SEM-NOISE', project_id: 'louza', module: 'louza', summary: 'Barely related note', similarity: 0.858 },
             { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'duplicate of a word hit', similarity: 0.9 }];
-          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic };
+          const commits = url.searchParams.get('commits') ? [
+            { repo: 'louza', sha: 'abc123456', project_id: 'louza', date: '2026-10-01', subject: 'fix(boletim): media ponderada do louza', score: 6, hits: 2 },
+            { repo: 'louza', sha: 'def999999', project_id: 'louza', date: '2026-09-01', subject: 'chore: louza deps', score: 3, hits: 1 },
+          ] : undefined;
+          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits };
         },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -410,4 +414,12 @@ test('on-stop links the files a turn edited to the rows it saved', async () => {
   const link = api.routes('paths').find((c) => c.method === 'POST');
   assert.equal(link.project, 'louza');
   assert.deepEqual(link.body.items, [{ id: 'LOUZA-FERIAS-9', paths: ['src/ferias/ferias.service.ts'], mode: 'append' }]);
+});
+
+test('commits whose subject holds two of the words come with the hits; weaker ones stay out', async () => {
+  const out = await prompt('s33', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.equal(api.routes('search')[0].query.commits, '3');
+  assert.match(ctx, /- commit louza@abc1234 · 2026-10-01 · fix\(boletim\): media ponderada do louza/);
+  assert.doesNotMatch(ctx, /def9999/);
 });

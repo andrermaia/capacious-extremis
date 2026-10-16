@@ -72,7 +72,18 @@ function upsertItems(options) {
     summary: r.summary,
     details: r.details || null,
     keywords: normalizeKeywords(r.keywords),
+    supersedes: r.supersedes || null,
   }));
+}
+
+// What the API says after an upsert besides the action: rows this one retired (supersedes)
+// and existing rows that look like a new one, so the agent can merge instead of duplicating.
+function upsertExtras(results) {
+  const parecidos = results.filter((r) => r.similar?.length);
+  if (!parecidos.length) return {};
+  process.stderr.write(`[context-cli] ${parecidos.length} item(s) novo(s) parecido(s) com linhas que já existem: ` +
+    `${parecidos.map((r) => `${r.id} ~ ${r.similar.map((s) => s.id).join(', ')}`).join('; ')}\n`);
+  return { aviso_parecidos: 'Linhas parecidas já existem (similar). Se for o mesmo assunto, atualize o ID antigo ou regrave com "supersedes":"<ID antigo>" (o antigo sai da busca).' };
 }
 
 // Portuguese keywords next to the English summary: a list or "a, b" -> "a, b" (max 300).
@@ -360,11 +371,13 @@ async function main() {
               body: JSON.stringify({
                 id: item.id, project_id: projectId, module: item.module, feature: item.feature, knowledge_type: item.type,
                 phase: item.phase, tasks_progress: item.progress, summary: item.summary, details: item.details, keywords: item.keywords,
+                supersedes: item.supersedes,
               }),
             }, apiToken);
-            results.push({ id: item.id, action: data.action });
+            results.push({ id: item.id, action: data.action, ...(data.superseded ? { superseded: data.superseded } : {}),
+              ...(data.supersedes_missing ? { supersedes_missing: data.supersedes_missing } : {}), ...(data.similar ? { similar: data.similar } : {}) });
           }
-          console.log(JSON.stringify({ status: 'ok', count: results.length, results, ...keywordsWarning(batch.filter((i) => !i.keywords).map((i) => i.id)) }, null, 2));
+          console.log(JSON.stringify({ status: 'ok', count: results.length, results, ...upsertExtras(results), ...keywordsWarning(batch.filter((i) => !i.keywords).map((i) => i.id)) }, null, 2));
           return;
         }
         const id = options.id || options.args[1];
@@ -383,14 +396,15 @@ async function main() {
           tasks_progress: options.progress || options.tasks_progress || null,
           summary,
           details: options.details || null,
-          keywords: normalizeKeywords(options.keywords)
+          keywords: normalizeKeywords(options.keywords),
+          supersedes: options.supersedes || null
         };
 
         const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {
           method: 'POST',
           body: JSON.stringify(body)
         }, apiToken);
-        console.log(JSON.stringify({ ...data, ...keywordsWarning(body.keywords ? [] : [body.id]) }, null, 2));
+        console.log(JSON.stringify({ ...data, ...upsertExtras([{ id: body.id, ...data }]), ...keywordsWarning(body.keywords ? [] : [body.id]) }, null, 2));
         return;
       }
 
@@ -467,6 +481,8 @@ async function main() {
         const scope = searchScope(options, projectId);
         if (scope.length) qs += `&project=${encodeURIComponent(scope.join(','))}`;
         if (options.limit) qs += `&limit=${encodeURIComponent(options.limit)}`;
+        // Commits that hold the words come with the rows (--commits 0 turns them off).
+        qs += `&commits=${encodeURIComponent(options.commits ?? 5)}`;
         const data = await requestApi(apiUrl, qs, {}, apiToken);
         console.log(JSON.stringify(data, null, 2));
         return;
