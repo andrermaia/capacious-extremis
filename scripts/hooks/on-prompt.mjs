@@ -57,7 +57,7 @@ if (trivial && !current) {
 // the hook searches the base with the prompt's words instead, in parallel.
 const words = notice || trivial ? [] : searchWords(prompt);
 const searching = words.length
-  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--project', project, '--api-url', url], { timeoutMs: 8000 })
+  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--excerpt', '2', '--project', project, '--api-url', url], { timeoutMs: 8000 })
   : null;
 
 const [listed, task, found] = await Promise.all([listing, taskRun, searching, ...closing]);

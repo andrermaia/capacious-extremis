@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, callApi, withLocalFallback,
-  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, CLI,
+  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, apiRequest, savePathsIndex, CLI,
 } from './hook-lib.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,14 +33,17 @@ inBackground('hygiene', 7 * DAY_MS, [scriptPath('hygiene.mjs'), '--fix', '--save
 // The local cache is what reads fall back to when the API is unreachable: keep it a week fresh at most.
 inBackground('pull', 7 * DAY_MS, [scriptPath('context-cli.mjs'), 'pull']);
 
-const [modulesRaw, open, blocked, done, inProgress, hygiene] = await Promise.all([
+const [modulesRaw, open, blocked, done, inProgress, hygiene, pathsIndex] = await Promise.all([
   read(['list-modules']),
   read(['list-tasks', '--status', 'IN_PROGRESS', '--limit', '30']),
   read(['list-tasks', '--status', 'BLOCKED', '--limit', '10']),
   read(['list-tasks', '--status', 'DONE', '--limit', '30']),
   read(['query', '--phase', 'in_progress']),
   callApi(root, ['get', 'HYGIENE-REPORT', '--project', 'global', '--api-url', url], { timeoutMs: 8000 }),
+  apiRequest(root, 'GET', 'paths', null, { timeoutMs: 8000 }),
 ]);
+// The edit hook's file radar reads this index locally (no network at edit time).
+if (pathsIndex.ok && Array.isArray(pathsIndex.data)) savePathsIndex(pathsIndex.data);
 const listing = withLocalFallback(root, ['list-modules', '--project', project], modulesRaw);
 const modules = listing.ok && Array.isArray(listing.data) ? listing.data : [];
 if (listing.source === 'api' && modules.length) saveModulesCache(project, modules);

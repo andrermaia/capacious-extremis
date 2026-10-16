@@ -24,9 +24,10 @@ Modern AI agents often suffer from **context loss between sessions** or **token 
 │   ├── context-cli.mjs      # Zero-dependency Node 24 CLI for database operations
 │   ├── bootstrap-scan.mjs   # Brownfield codebase scanner to auto-discover modules
 │   └── hooks/               # Claude Code hooks that enforce the protocol on every prompt
-│       ├── on-prompt.mjs        # UserPromptSubmit: auto list-modules + protocol injection
-│       ├── on-edit-guard.mjs    # PreToolUse: deny Edit/Write until a task is open
-│       └── on-stop.mjs          # Stop: refuse to end the turn with an open task
+│       ├── on-session-start.mjs # SessionStart: protocol, open work, file-radar index
+│       ├── on-prompt.mjs        # UserPromptSubmit: opens the task, injects search hits (+ excerpts)
+│       ├── on-edit-guard.mjs    # PreToolUse: file radar, upsert reminder, deny only when the API is down
+│       └── on-stop.mjs          # Stop: closes the task, saves the result, links edited files to saved rows
 ├── tests/                   # Automated test suite using Node.js native test runner
 ├── .gitignore
 └── README.md

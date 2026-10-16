@@ -17,6 +17,7 @@ function fakeApi() {
   const tasks = [];
   let down = false;
   let hygieneReport = null;
+  let pathsRows = [];
   let n = 0;
   const task = (id) => tasks.find((t) => t.id === id) || {};
   const server = http.createServer((req, res) => {
@@ -45,6 +46,7 @@ function fakeApi() {
           ? [{ id: 'LOUZA-WIP-1', module: 'louza', phase: 'in_progress', tasks_progress: '02/05', summary: 'Rematricula 2027 half done', updated_at: now() },
             { id: 'OLD-WIP', module: 'louza', phase: 'in_progress', summary: 'Untouched for a month', updated_at: '2026-01-01T00:00:00Z' }] : []),
         upsert: () => ({ status: 'ok', id: json.id, action: 'inserted' }),
+        paths: () => (req.method === 'GET' ? pathsRows : { status: 'ok', updated: (json.items || []).length, missing: [] }),
         search: () => {
           const words = String(url.searchParams.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
           const rows = [
@@ -55,9 +57,10 @@ function fakeApi() {
           const knowledge = rows.map((r) => {
             const strong = words.filter((w) => r.summary.toLowerCase().includes(w)).length;
             const weak = words.filter((w) => !r.summary.toLowerCase().includes(w) && String(r.details || '').includes(w)).length;
-            return { ...r, hits: strong + weak, score: 3 * strong + weak };
+            return { ...r, hits: strong + weak, score: 3 * strong + weak, excerpt: url.searchParams.get('excerpt') ? `Detalhes de ${r.module}: a média pondera 4, 3 e 3.` : undefined };
           }).filter((r) => r.hits);
           const semantic = [{ id: 'SEM-1', project_id: 'louza', module: 'louza', summary: 'Report card grades close by weighted mean', similarity: 0.87 },
+            { id: 'SEM-NOISE', project_id: 'louza', module: 'louza', summary: 'Barely related note', similarity: 0.858 },
             { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'duplicate of a word hit', similarity: 0.9 }];
           return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic };
         },
@@ -73,6 +76,7 @@ function fakeApi() {
     routes: (r) => calls.filter((c) => c.route === r),
     setDown: (v) => { down = v; },
     setHygiene: (r) => { hygieneReport = r; },
+    setPaths: (rows) => { pathsRows = rows; },
     close: () => server.close(),
   })));
 }
@@ -360,4 +364,50 @@ test('a short acknowledgement opens no task and searches nothing; if the turn wo
   await prompt('s17', 'valeu');
   await stopWith('s17', transcript('s17b', []));
   assert.equal(api.routes('tasks/start').length, starts + 1);
+});
+
+test('strong hits carry the start of their details; weak semantic neighbours stay out', async () => {
+  const out = await prompt('s30', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.equal(api.routes('search')[0].query.excerpt, '2');
+  assert.match(ctx, /- louza\/LOUZA-BOLETIM-1 · .*\n  ↳ Detalhes de louza: a média pondera 4, 3 e 3\./);
+  assert.match(ctx, /≈ louza\/SEM-1/);
+  assert.doesNotMatch(ctx, /SEM-NOISE/);
+});
+
+test('the file radar warns once per file, for subagents too, from the index session start saved', async () => {
+  api.setPaths([
+    { project_id: 'louza', id: 'GOTCHA-PONTO', module: 'louza', knowledge_type: 'technical_debt', summary: 'ponto_dia keeps phantom absences', paths: ['src/ponto/ponto.service.ts'], updated_at: '2026-09-01T00:00:00Z' },
+    { project_id: 'qlave', id: 'QLAVE-PONTO', module: 'qlave', knowledge_type: 'system_model', summary: 'another product, same file name', paths: ['ponto.service.ts'], updated_at: '2026-09-01T00:00:00Z' },
+  ]);
+  await sessionStart('s31');
+  await prompt('s31', 'pedido');
+  const file = path.join(ws.root, 'louza', 'src', 'ponto', 'ponto.service.ts');
+  const first = await edit('s31', { tool_input: { file_path: file, content: 'x' } });
+  assert.match(first.hookSpecificOutput.additionalContext, /Radar da base para ponto\.service\.ts[\s\S]*louza\/GOTCHA-PONTO · ponto_dia keeps phantom absences/);
+  assert.doesNotMatch(first.hookSpecificOutput.additionalContext, /QLAVE-PONTO/);
+  assert.equal(await edit('s31', { tool_input: { file_path: file, content: 'y' } }), null);
+  const sub = await edit('s31b', { agent_id: 'a1', tool_input: { file_path: file, content: 'z' } });
+  assert.match(sub.hookSpecificOutput.additionalContext, /GOTCHA-PONTO/);
+  assert.equal(api.routes('tasks/start').length, 1);
+});
+
+test('on-stop links the files a turn edited to the rows it saved', async () => {
+  await prompt('s32', 'pedido');
+  fs.mkdirSync(path.join(ws.root, 'louza', '.git'), { recursive: true });
+  const edited = path.join(ws.root, 'louza', 'src', 'ferias', 'ferias.service.ts');
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'pedido' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: edited, old_string: 'a', new_string: 'b' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'ok' }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'u1', name: 'Bash', input: { command: 'node context-cli.mjs upsert --project louza --file - <<EOF\n[{"id":"LOUZA-FERIAS-9","summary":"x"}]\nEOF' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: '{"status":"ok","results":[{"id":"LOUZA-FERIAS-9","action":"inserted"}]}' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Feito.' }] } },
+  ];
+  const file = path.join(ws.base, 's32.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  await stopWith('s32', file);
+  const link = api.routes('paths').find((c) => c.method === 'POST');
+  assert.equal(link.project, 'louza');
+  assert.deepEqual(link.body.items, [{ id: 'LOUZA-FERIAS-9', paths: ['src/ferias/ferias.service.ts'], mode: 'append' }]);
 });

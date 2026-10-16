@@ -8,7 +8,7 @@
 // unreachable the task stays open and the next prompt continues it.
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, runCliAsync, callApi, apiUrl,
-  finalAnswer, outcomeLine, turnCliCalls, recordTask, STAGE,
+  finalAnswer, outcomeLine, turnCliCalls, recordTask, apiRequest, repoRelative, STAGE,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
@@ -18,7 +18,13 @@ const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
 
 const state = loadState(input.session_id);
-const { upserts, finished, toolUses } = turnCliCalls(input);
+const { upserts, finished, toolUses, edited, upserted } = turnCliCalls(input);
+// What this turn saved is about the files it edited: link them, so the edit hook can warn
+// whoever edits those files next (any clone, any session, any agent).
+const linking = edited.length && upserted.length
+  ? Promise.all(upserted.map(({ project, ids }) => apiRequest(root, 'POST', `paths?project=${encodeURIComponent(project)}`,
+    { items: ids.map((id) => ({ id, paths: edited.map((f) => repoRelative(f, root)), mode: 'append' })) }, { timeoutMs: 6000 })))
+  : null;
 // Tasks the agent closed itself (BLOCKED, or DONE by habit) keep their status.
 for (const f of finished) {
   const task = (state.tasks || []).find((t) => t.id === f.id);
@@ -36,6 +42,7 @@ if (!open.length && state.turn?.trivial && toolUses > 0) {
   }
 }
 if (!open.length && !upserts) {
+  await linking;
   saveState(input.session_id, state);
   process.exit(0);
 }
@@ -53,6 +60,7 @@ const [results] = await Promise.all([
   Promise.all(open.map((task) =>
     callApi(root, ['task-finish', '--project', projectOf(task), '--id', task.id, '--status', 'DONE', '--api-url', apiUrl()], { timeoutMs: 7000 }))),
   saving,
+  linking,
 ]);
 for (const [i, task] of open.entries()) {
   const r = results[i];

@@ -221,13 +221,23 @@ export function turnCliCalls(input) {
   let upserts = 0;
   const finished = [];
   let toolUses = 0;
+  const edited = new Set();
+  const upserted = [];
   for (const rec of tail.slice(start)) {
-    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) if (b?.type === 'tool_use') toolUses++;
+    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) {
+      if (b?.type !== 'tool_use') continue;
+      toolUses++;
+      const f = b.input?.file_path || b.input?.notebook_path;
+      if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(b.name) && f) edited.add(String(f));
+    }
   }
   for (const [id, command] of commands) {
     const bare = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
     const out = results.get(id) || '';
     if (/\bupsert\b/.test(bare)) {
+      const project = command.match(/upsert\b[^\n]*?--project\s+["']?([\w-]+)/)?.[1];
+      const ids = [...command.matchAll(/"id"\s*:\s*"([^"]+)"|--id\s+["']?([^\s"']+)/g)].map((m) => m[1] || m[2]);
+      if (project && ids.length) upserted.push({ project, ids: [...new Set(ids)] });
       upserts += (out.match(/\\?"action\\?"\s*:\s*\\?"(inserted|updated|upserted)/g) || []).length || (bare.match(/\bupsert\b/g) || []).length;
     }
     if (/\btask-finish\b/.test(bare)) {
@@ -236,7 +246,7 @@ export function turnCliCalls(input) {
       }
     }
   }
-  return { upserts, finished, toolUses };
+  return { upserts, finished, toolUses, edited: [...edited], upserted };
 }
 
 export function finalAnswer(input) {
@@ -330,6 +340,12 @@ export function searchWords(prompt) {
 // counts 3 per word found in the summary, id or Portuguese keywords and 1 per word found
 // only in the details: from three words up a hit needs 5 (two strong matches, or one
 // strong and two weak), so loose words in long notes do not flood the context.
+// Two words found in the summary, id or keywords (3 points each); semantic thresholds for the
+// prompt are stricter than the API's: a prompt is not a question and carries noise.
+const STRONG_SCORE = 6;
+const SEMANTIC_IN_PROMPT = 0.865;
+const SEMANTIC_STRONG = 0.88;
+
 export function hitsBlock(data, words, ownTaskIds = new Set()) {
   const minScore = words.length >= 3 ? 5 : 3;
   const minTaskHits = Math.max(2, Math.ceil(words.length / 2));
@@ -345,15 +361,79 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   // Rows close in meaning that no word reached (API semantic layer), after the word hits.
   const seen = new Set(knowledge.map((k) => `${k.project_id}|${k.id}`));
   const similar = (data?.semantic || [])
-    .filter((k) => !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene'].includes(k.module))
+    .filter((k) => k.similarity >= SEMANTIC_IN_PROMPT && !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene'].includes(k.module))
     .slice(0, Math.min(2, Math.max(0, 5 - knowledge.length)));
+  // A strong hit brings the start of its details, so the agent rarely needs a get turn.
+  let excerpts = 0;
+  const withExcerpt = (line, k, strong) => {
+    if (!strong || !k.excerpt || excerpts >= 2) return [line];
+    excerpts++;
+    return [line, `  ↳ ${cut(k.excerpt, 420)}`];
+  };
   if (!knowledge.length && !tasks.length && !similar.length) return [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
-    ...knowledge.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`),
-    ...similar.map((k) => `- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`),
+    ...knowledge.flatMap((k, i) => withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, i < 2 && (k.score ?? 3 * k.hits) >= STRONG_SCORE)),
+    ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
   ];
+}
+
+// --- File radar: rows of the base linked to files (paths), kept as a local index by the
+// session-start hook, looked up by the edit hook with no network call.
+const GENERIC_FILES = new Set(['index.ts', 'index.js', 'index.tsx', 'page.tsx', 'layout.tsx', 'route.ts', 'main.ts', 'app.module.ts',
+  'package.json', 'readme.md', 'ci.yml', 'docker-compose.yml', 'tsconfig.json', '.env', 'dockerfile', 'schema.sql', 'server.mjs', 'config.ts']);
+
+function pathsIndexFile() {
+  return path.join(path.dirname(stateFile('paths')), 'paths-index.json');
+}
+
+export function savePathsIndex(rows) {
+  try { fs.writeFileSync(pathsIndexFile(), JSON.stringify(rows)); } catch {}
+}
+
+export function loadPathsIndex() {
+  try { return JSON.parse(fs.readFileSync(pathsIndexFile(), 'utf8')); } catch { return []; }
+}
+
+// A stored path matches the edited file when the file ends with it (repo-relative or deeper);
+// a bare file name counts only when it is not generic (index.ts, page.tsx, package.json…).
+export function pathMatches(stored, file) {
+  const f = String(file || '').replace(/\\/g, '/').toLowerCase();
+  const p = String(stored || '').toLowerCase();
+  if (!p || !f) return false;
+  if (p.includes('/')) return f === p || f.endsWith(`/${p}`);
+  return !GENERIC_FILES.has(p) && f.split('/').pop() === p;
+}
+
+// Folder names that differ from the project id; every other project lives in folders named after it.
+const PROJECT_DIRS = { qpoker: 'qoinpoker' };
+const CROSS_PROJECT = new Set(['projetos', 'global']);
+
+// Rows of another product stay out: a file under louza-fe/ only hears about louza's rows (and the
+// cross-project ones), so a bare name like permissoes.ts does not pull qlave's notes.
+export function radarFor(file, index, max = 3) {
+  const segs = String(file || '').replace(/\\/g, '/').toLowerCase().split('/');
+  const products = [...new Set((index || []).map((r) => r.project_id))].filter((p) => !CROSS_PROJECT.has(p));
+  const owners = products.filter((p) => segs.some((s) => s.startsWith(PROJECT_DIRS[p] || p)));
+  return (index || [])
+    .filter((r) => !owners.length || owners.includes(r.project_id) || CROSS_PROJECT.has(r.project_id))
+    .filter((r) => (r.paths || []).some((p) => pathMatches(p, file)))
+    .sort((a, b) => (b.knowledge_type === 'technical_debt') - (a.knowledge_type === 'technical_debt') || String(b.updated_at).localeCompare(String(a.updated_at)))
+    .slice(0, max);
+}
+
+// The file path relative to its git repository (or to the projects root), so a link made in
+// one clone or worktree matches the same file in another.
+export function repoRelative(file, root) {
+  let dir = path.dirname(path.resolve(file));
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return path.relative(dir, path.resolve(file)).split(path.sep).join('/').toLowerCase();
+    const parent = path.dirname(dir);
+    if (parent === dir || (root && path.resolve(dir) === path.resolve(root))) break;
+    dir = parent;
+  }
+  return path.relative(root || path.dirname(file), path.resolve(file)).split(path.sep).join('/').toLowerCase();
 }
 
 export function upsertReminder(taskId) {
@@ -400,15 +480,19 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;
     default: return runCliAsync(root, args, { timeoutMs });
   }
+  return apiRequest(root, method, endpoint, body, { timeoutMs, base });
+}
+
+export async function apiRequest(root, method, endpoint, body, { timeoutMs = 8000, base = apiUrl() } = {}) {
   const token = cliEnv(root).CONTEXT_API_TOKEN;
   try {
-    const res = await fetch(`${base}/${endpoint}`, {
+    const res = await fetch(`${String(base).replace(/\/$/, '')}/${endpoint}`, {
       method,
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: body ? JSON.stringify(body) : undefined,

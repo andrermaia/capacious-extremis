@@ -10,11 +10,10 @@
 import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
-  callApi, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE,
+  callApi, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE, CLI, radarFor, loadPathsIndex,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
-if (input.agent_id) process.exit(0);
 const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: nothing to track
 
@@ -22,12 +21,36 @@ const target = String(input.tool_input?.file_path || input.tool_input?.notebook_
 if (/\/(\.agents|\.claude)\//.test(target) || /\/CLAUDE\.md$/.test(target)) process.exit(0);
 
 const state = loadState(input.session_id);
+
+// File radar, for every agent (subagents too): what the base knows about this file, once
+// per file per session, from the local index (no network).
+const radar = [];
+const seenKey = target.toLowerCase();
+state.radarSeen ||= [];
+if (!state.radarSeen.includes(seenKey)) {
+  const rows = radarFor(target, loadPathsIndex());
+  if (rows.length) {
+    state.radarSeen.push(seenKey);
+    radar.push(`Radar da base para ${path.basename(target)} (o que já se sabe deste arquivo; detalhes: ${CLI} get <ID> --project <projeto>):`,
+      ...rows.map((r) => `- ${r.project_id}/${r.id} · ${String(r.summary).slice(0, 180)}`));
+  }
+}
+const radarOut = (extra = {}, more = []) => {
+  const ctx = [...radar, ...more].join('\n');
+  return ctx ? { ...extra, hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: ctx, ...(extra.hookSpecificOutput || {}) } } : extra;
+};
+if (input.agent_id) {
+  if (radar.length) { saveState(input.session_id, state); emit(radarOut()); }
+  process.exit(0);
+}
+
 const open = openTasks(state);
 if (open.length > 0) {
-  if (state.turn && !state.turn.reminded) {
-    state.turn.reminded = true;
+  const remind = state.turn && !state.turn.reminded;
+  if (remind) state.turn.reminded = true;
+  if (remind || radar.length) {
     saveState(input.session_id, state);
-    emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: upsertReminder(open.at(-1).id) } });
+    emit(radarOut({}, remind ? [upsertReminder(open.at(-1).id)] : []));
   }
   process.exit(0);
 }
@@ -47,7 +70,7 @@ if (id) {
     systemMessage: `🟢 ${STAGE.TASK} · ${id} aberta automaticamente (módulo ${module})`,
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
-      additionalContext: `${STAGE.TASK}: nenhuma tarefa estava aberta; o hook abriu ${id}. ${upsertReminder(id)}`,
+      additionalContext: [...radar, `${STAGE.TASK}: nenhuma tarefa estava aberta; o hook abriu ${id}. ${upsertReminder(id)}`].join('\n'),
     },
   });
   process.exit(0);
