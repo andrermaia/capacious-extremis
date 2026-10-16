@@ -503,7 +503,7 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['meaning', opts.meaning], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;

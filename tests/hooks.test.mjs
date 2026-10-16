@@ -379,6 +379,8 @@ test('strong hits carry the start of their details; weak semantic neighbours sta
   const out = await prompt('s30', 'corrija o boletim do louza');
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.equal(api.routes('search')[0].query.excerpt, '2');
+  // Meaning is measured against the whole request, not only its loose words.
+  assert.equal(api.routes('search')[0].query.meaning, 'corrija o boletim do louza');
   assert.match(ctx, /- louza\/LOUZA-BOLETIM-1 · .*\n  ↳ Detalhes de louza: a média pondera 4, 3 e 3\./);
   assert.match(ctx, /≈ louza\/SEM-1/);
   assert.doesNotMatch(ctx, /SEM-NOISE/);
