@@ -286,7 +286,7 @@ export function protocolText(project) {
     '  EOF',
     `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
     'Subagentes ficam fora do protocolo: passe a eles o contexto e grave você o que descobrirem.',
-    `Projetos (--project): ${PROJECTS}. A API compartilhada é o padrão do CLI: não passe --api-url nem --no-api.`,
+    `Projetos (--project): ${PROJECTS}. Fato de um produto vai no projeto dele (--project louza, qoinstore, qoinpass…), mesmo trabalhando na raiz; projetos é só para o que cruza produtos. A API compartilhada é o padrão do CLI: não passe --api-url nem --no-api.`,
   ].join('\n');
 }
 
