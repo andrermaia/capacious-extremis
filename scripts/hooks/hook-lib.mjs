@@ -340,9 +340,12 @@ export function searchWords(prompt) {
 // counts 3 per word found in the summary, id or Portuguese keywords and 1 per word found
 // only in the details: from three words up a hit needs 5 (two strong matches, or one
 // strong and two weak), so loose words in long notes do not flood the context.
-// Two words found in the summary, id or keywords (3 points each); semantic thresholds for the
-// prompt are stricter than the API's: a prompt is not a question and carries noise.
-const STRONG_SCORE = 6;
+// A hit is strong when two of its words sit in the summary, id or keywords: score - hits =
+// 2 per such word (+1 per word in module or feature), so loose words in long details never
+// make a row strong. Semantic thresholds for the prompt are stricter than the API's: a prompt
+// is not a question and carries noise.
+const STRONG = 4;
+const strength = (k) => (k.score ?? 3 * k.hits) - (k.hits ?? 0);
 const SEMANTIC_IN_PROMPT = 0.865;
 const SEMANTIC_STRONG = 0.88;
 
@@ -375,7 +378,7 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   if (!knowledge.length && !tasks.length && !similar.length && !commits.length) return [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
-    ...knowledge.flatMap((k, i) => withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, i < 2 && (k.score ?? 3 * k.hits) >= STRONG_SCORE)),
+    ...knowledge.flatMap((k, i) => withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, i < 2 && strength(k) >= STRONG)),
     ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
     ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),

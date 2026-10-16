@@ -379,6 +379,15 @@ test('strong hits carry the start of their details; weak semantic neighbours sta
   assert.doesNotMatch(ctx, /SEM-NOISE/);
 });
 
+test('a hit made of loose words in long details never carries an excerpt', async () => {
+  // Three words, all only in the details of WEAK-1 (score 3, hits 3): shown by no one; and a
+  // row whose words sit in the summary keeps its excerpt.
+  const out = await prompt('s34', 'corrija boletim louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(ctx, /WEAK-1/);
+  assert.match(ctx, /LOUZA-BOLETIM-1 · .*\n  ↳ /);
+});
+
 test('the file radar warns once per file, for subagents too, from the index session start saved', async () => {
   api.setPaths([
     { project_id: 'louza', id: 'GOTCHA-PONTO', module: 'louza', knowledge_type: 'technical_debt', summary: 'ponto_dia keeps phantom absences', paths: ['src/ponto/ponto.service.ts'], updated_at: '2026-09-01T00:00:00Z' },
