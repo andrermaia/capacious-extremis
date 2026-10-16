@@ -345,6 +345,10 @@ export function searchWords(prompt) {
 // make a row strong. Semantic thresholds for the prompt are stricter than the API's: a prompt
 // is not a question and carries noise.
 const STRONG = 4;
+// Measured 16/10/2026 on real prompts: word hits unrelated to the prompt 0.78-0.82 in meaning,
+// the right rows 0.82-0.90 (multilingual-e5-small, query vs passage).
+const RELEVANT = 0.82;
+const RELEVANT_TOP = 0.80;
 const strength = (k) => (k.score ?? 3 * k.hits) - (k.hits ?? 0);
 const SEMANTIC_IN_PROMPT = 0.865;
 const SEMANTIC_STRONG = 0.88;
@@ -356,9 +360,15 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     const t = String(s || '').replace(/\s+/g, ' ').trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
   };
-  const knowledge = (data?.knowledge || [])
+  const ranked = (data?.knowledge || [])
     // Rules are already in CLAUDE.md; bootstrap-scan rows only list build files.
     .filter((k) => (k.score ?? 3 * k.hits) >= minScore && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
+    // Equal word scores: the row closer in meaning to the prompt first.
+    .sort((a, b) => (b.score ?? 3 * b.hits) - (a.score ?? 3 * a.hits) || (b.similarity ?? 0) - (a.similarity ?? 0));
+  // A word hit far in meaning from the prompt (API similarity) only shared loose words: out,
+  // except the best one, which only needs to clear a lower bar. Without similarity, all stay.
+  const knowledge = ranked
+    .filter((k, i) => k.similarity == null || k.similarity >= RELEVANT || (i === 0 && k.similarity >= RELEVANT_TOP))
     .slice(0, 5);
   const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && !ownTaskIds.has(t.id) && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
   // Rows close in meaning that no word reached (API semantic layer), after the word hits.

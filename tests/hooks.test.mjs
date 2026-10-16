@@ -55,6 +55,7 @@ function fakeApi() {
             { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'Boletim do louza: trimestre fecha pela media ponderada' },
             { id: 'RULE-BOLETIM', project_id: 'global', module: 'rules', summary: 'Boletim louza rule that must not show' },
             { id: 'WEAK-1', project_id: 'louza', module: 'louza', summary: 'Unrelated note', details: 'corrija boletim louza' },
+            { id: 'LOOSE-1', project_id: 'louza', module: 'louza', summary: 'Louza boletim words, nothing to do with the prompt', similarity: 0.79 },
           ];
           const knowledge = rows.map((r) => {
             const strong = words.filter((w) => r.summary.toLowerCase().includes(w)).length;
@@ -506,4 +507,11 @@ test('no draft for a quick fix, for a turn that saved its knowledge, or for file
   await prompt('s45', 'pedido');
   await stopWith('s45', workTranscript('s45', path.join(ws.base, 'fora', 'b.ts')));
   assert.equal(api.routes('upsert').filter((c) => c.body.module === 'drafts').length, 0);
+});
+
+test('a word hit far in meaning from the prompt stays out; one close in meaning stays', async () => {
+  const out = await prompt('s35', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(ctx, /LOOSE-1/);
+  assert.match(ctx, /LOUZA-BOLETIM-1/);
 });
