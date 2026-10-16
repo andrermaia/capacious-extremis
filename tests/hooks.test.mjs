@@ -56,6 +56,7 @@ function fakeApi() {
             { id: 'RULE-BOLETIM', project_id: 'global', module: 'rules', summary: 'Boletim louza rule that must not show' },
             { id: 'WEAK-1', project_id: 'louza', module: 'louza', summary: 'Unrelated note', details: 'corrija boletim louza' },
             { id: 'LOOSE-1', project_id: 'louza', module: 'louza', summary: 'Louza boletim words, nothing to do with the prompt', similarity: 0.79 },
+            { id: 'NEAR-1', project_id: 'louza', module: 'louza', summary: 'Boletim louza near but not about it', similarity: 0.83 },
           ];
           const knowledge = rows.map((r) => {
             const strong = words.filter((w) => r.summary.toLowerCase().includes(w)).length;
@@ -514,4 +515,10 @@ test('a word hit far in meaning from the prompt stays out; one close in meaning 
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.doesNotMatch(ctx, /LOOSE-1/);
   assert.match(ctx, /LOUZA-BOLETIM-1/);
+});
+
+test('a strong word hit only somewhat close in meaning shows without its excerpt', async () => {
+  const out = await prompt('s36', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /- louza\/NEAR-1 · Boletim louza near but not about it\n(?!  ↳)/);
 });
