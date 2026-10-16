@@ -57,7 +57,9 @@ function fakeApi() {
             const weak = words.filter((w) => !r.summary.toLowerCase().includes(w) && String(r.details || '').includes(w)).length;
             return { ...r, hits: strong + weak, score: 3 * strong + weak };
           }).filter((r) => r.hits);
-          return { query: words.join(' '), scope: 'all', knowledge, tasks: [] };
+          const semantic = [{ id: 'SEM-1', project_id: 'louza', module: 'louza', summary: 'Report card grades close by weighted mean', similarity: 0.87 },
+            { id: 'LOUZA-BOLETIM-1', project_id: 'louza', module: 'louza', summary: 'duplicate of a word hit', similarity: 0.9 }];
+          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic };
         },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -149,6 +151,9 @@ test('on-prompt opens the task itself, with the module the prompt mentions', asy
   assert.doesNotMatch(ctx, /RULE-BOLETIM/);
   // Three words found only in the details score 3 < 5: not shown.
   assert.doesNotMatch(ctx, /WEAK-1/);
+  // A row close in meaning comes after the word hits, marked; a duplicate of a word hit does not.
+  assert.match(ctx, /- ≈ louza\/SEM-1 · Report card grades/);
+  assert.equal((ctx.match(/LOUZA-BOLETIM-1/g) || []).length, 1);
   assert.match(out.systemMessage, /🟢 Etapa 2\/3 · Tarefa · TASK-FAKE1-1/);
   assert.deepEqual(state('s1').tasks.map((t) => [t.id, t.finished]), [['TASK-FAKE1-1', false]]);
 });

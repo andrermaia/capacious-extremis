@@ -342,10 +342,16 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     .filter((k) => (k.score ?? 3 * k.hits) >= minScore && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
     .slice(0, 5);
   const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && !ownTaskIds.has(t.id) && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
-  if (!knowledge.length && !tasks.length) return [];
+  // Rows close in meaning that no word reached (API semantic layer), after the word hits.
+  const seen = new Set(knowledge.map((k) => `${k.project_id}|${k.id}`));
+  const similar = (data?.semantic || [])
+    .filter((k) => !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene'].includes(k.module))
+    .slice(0, Math.min(2, Math.max(0, 5 - knowledge.length)));
+  if (!knowledge.length && !tasks.length && !similar.length) return [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
     ...knowledge.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`),
+    ...similar.map((k) => `- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
   ];
 }
