@@ -381,6 +381,10 @@ const SEMANTIC_STRONG = 0.88;
 const EDGE_LABEL = {
   'depends_on|out': 'depende de', 'depends_on|in': 'é base de', 'contradicts|out': 'contradiz', 'contradicts|in': 'contradito por',
   'refers_to|out': 'cita', 'refers_to|in': 'citado por',
+  // The map of entities and dependencies (17/10/2026).
+  'calls|out': 'chama', 'calls|in': 'é chamado por', 'notifies|out': 'avisa', 'notifies|in': 'recebe aviso de',
+  'auth_via|out': 'autentica via', 'auth_via|in': 'autentica', 'stores_in|out': 'guarda em', 'stores_in|in': 'guarda dados de',
+  'runs_on|out': 'roda em', 'runs_on|in': 'hospeda', 'deploys_via|out': 'publica via', 'deploys_via|in': 'publica',
 };
 export const draftLine = (d) => `- rascunho ${d.project_id}/${d.id} · ${String(d.summary || '').replace(/\s+/g, ' ').slice(0, 120)} `
   + `(trabalho que terminou sem upsert; ao concluir, grave a linha real com "supersedes":"${d.id}")`;

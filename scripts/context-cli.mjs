@@ -10,7 +10,7 @@ const defaultSchemaPath = path.resolve(__dirname, '../references/schema.sql');
 
 // The shared knowledge base lives on a server (CONTEXT_API_URL); the local SQLite file is
 // only a read-only cache, refreshed by `pull`. Use --no-api to work fully offline.
-const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks', 'search', 'neighbours'];
+const READ_COMMANDS = ['list-modules', 'query', 'get', 'list-tasks', 'search', 'neighbours', 'impact'];
 // Knowledge every project shares (universal agent rules live in its "rules" module).
 const GLOBAL_PROJECT = 'global';
 const WRITE_COMMANDS = ['upsert', 'task-start', 'task-step', 'task-finish', 'keywords'];
@@ -498,6 +498,15 @@ async function main() {
         return;
       }
 
+      // Who is affected if an entity of the map changes: everything that depends on it.
+      case 'impact': {
+        const id = options.id || options.args[1];
+        if (!id) throw new CliError('Usage: impact <ENT-ID> [--depth 1-4] [--project <p>]');
+        const qs = `impact?project=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}&depth=${encodeURIComponent(options.depth || 3)}`;
+        console.log(JSON.stringify(await requestApi(apiUrl, qs, {}, apiToken), null, 2));
+        return;
+      }
+
       // Rows up to --depth hops (1-3, default 2) from a row through the base's edges.
       case 'neighbours': {
         const id = options.id || options.args[1];
@@ -780,7 +789,8 @@ async function main() {
           'task-finish --id <id> [--status DONE|BLOCKED]',
           'list-tasks [--status <s>]',
           'search <words> [--all] [--limit <n>]   (this project + global; --all spans every project)',
-          'neighbours <ID> [--depth 1-3]   (rows linked to it through the base\'s edges: supersedes, depends_on, contradicts, refers_to)',
+          'neighbours <ID> [--depth 1-3]   (rows linked to it through the base\'s edges, any kind)',
+          'impact <ENT-ID> [--depth 1-4]   (map of entities: what depends on it — calls, notifies, auth_via, stores_in, runs_on, deploys_via, depends_on)',
           'pull   (refresh the local read-only cache from the API)'
         ],
         target: 'the API at CONTEXT_API_URL (environment or the "env" block of .claude/settings.local.json); --no-api forces the local SQLite cache',

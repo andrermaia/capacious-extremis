@@ -204,3 +204,15 @@ test('neighbours asks the API for the rows linked to a row, up to the depth give
     api.close();
   }
 });
+
+test('impact asks the API who depends on an entity', async () => {
+  const api = await fakeApi({ impact: () => ({ engine: 'age', affected: [{ id: 'ENT-LOUZA-API', hops: 1, kind: 'calls' }] }) });
+  try {
+    const r = await run(cliPath, ['--api-url', api.url, '--project', 'qoinmsg', 'impact', 'ENT-QOINMSG-API']);
+    assert.equal(r.status, 0, r.err);
+    assert.deepEqual(api.calls[0].query, { project: 'qoinmsg', id: 'ENT-QOINMSG-API', depth: '3' });
+    assert.equal(JSON.parse(r.out).affected[0].id, 'ENT-LOUZA-API');
+  } finally {
+    api.close();
+  }
+});
