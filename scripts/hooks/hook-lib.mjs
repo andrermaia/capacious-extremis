@@ -355,7 +355,8 @@ const RELEVANT_TOP = 0.80;
 // An excerpt costs ~420 characters: only for rows clearly about the prompt (the right rows
 // measured 0.86-0.90; a noisy top word hit 0.815).
 const EXCERPT_MIN = 0.845;
-const strength = (k) => (k.score ?? 3 * k.hits) - (k.hits ?? 0);
+// The API's full-text search says how many rare-enough words sit in summary, id or keywords.
+const strength = (k) => (k.strong != null ? 2 * k.strong : (k.score ?? 3 * k.hits) - (k.hits ?? 0));
 const SEMANTIC_IN_PROMPT = 0.865;
 const SEMANTIC_STRONG = 0.88;
 
