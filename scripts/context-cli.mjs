@@ -72,6 +72,7 @@ function upsertItems(options) {
     details: r.details || null,
     keywords: normalizeKeywords(r.keywords),
     supersedes: r.supersedes || null,
+    links: r.links || null,
   }));
 }
 
@@ -379,10 +380,10 @@ async function main() {
               body: JSON.stringify({
                 id: item.id, project_id: projectId, module: item.module, feature: item.feature, knowledge_type: item.type,
                 phase: item.phase, tasks_progress: item.progress, summary: item.summary, details: item.details, keywords: item.keywords,
-                supersedes: item.supersedes,
+                supersedes: item.supersedes, links: item.links,
               }),
             }, apiToken);
-            results.push({ id: item.id, action: data.action, ...(data.superseded ? { superseded: data.superseded } : {}),
+            results.push({ id: item.id, action: data.action, ...(data.superseded ? { superseded: data.superseded } : {}), ...(data.linked ? { linked: data.linked } : {}),
               ...(data.supersedes_missing ? { supersedes_missing: data.supersedes_missing } : {}), ...(data.similar ? { similar: data.similar } : {}) });
           }
           console.log(JSON.stringify({ status: 'ok', count: results.length, results, ...upsertExtras(results), ...keywordsWarning(batch.filter((i) => !i.keywords).map((i) => i.id)) }, null, 2));
@@ -405,7 +406,8 @@ async function main() {
           summary,
           details: options.details || null,
           keywords: normalizeKeywords(options.keywords),
-          supersedes: options.supersedes || null
+          supersedes: options.supersedes || null,
+          links: options.links || null
         };
 
         const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {

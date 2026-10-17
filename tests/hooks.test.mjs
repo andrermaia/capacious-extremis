@@ -70,7 +70,9 @@ function fakeApi() {
             { repo: 'louza', sha: 'abc123456', project_id: 'louza', date: '2026-10-01', subject: 'fix(boletim): media ponderada do louza', score: 6, hits: 2 },
             { repo: 'louza', sha: 'def999999', project_id: 'louza', date: '2026-09-01', subject: 'chore: louza deps', score: 3, hits: 1 },
           ] : undefined;
-          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits };
+          const related = [{ for: 'louza|LOUZA-BOLETIM-1', dir: 'out', kind: 'contradicts', project_id: 'louza', id: 'LOUZA-BOLETIM-OLD', summary: 'Old rule: simple mean' }];
+          for (const k of knowledge) if (k.id === 'LOUZA-BOLETIM-1') k.stale = { repo: 'louza', sha: 'abc1234', date: '2026-10-10', subject: 'fix(boletim)' };
+          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits, related };
         },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -523,4 +525,20 @@ test('a strong word hit only somewhat close in meaning shows without its excerpt
   const out = await prompt('s36', 'corrija o boletim do louza');
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.match(ctx, /- louza\/NEAR-1 · Boletim louza near but not about it\n(?!  ↳)/);
+});
+
+test('a hit shows its graph neighbour under it and says when its files changed after it', async () => {
+  const out = await prompt('s37', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /- louza\/LOUZA-BOLETIM-1 · .* ⚠ arquivo mudou depois desta nota: louza@abc1234 \(2026-10-10\)/);
+  assert.match(ctx, /\n  ↔ contradiz louza\/LOUZA-BOLETIM-OLD · Old rule: simple mean/);
+});
+
+test('the file radar warns when an open note\'s file changed after it', async () => {
+  api.setPaths([{ project_id: 'louza', id: 'DEBT-MEDIA', module: 'louza', knowledge_type: 'technical_debt', phase: 'queued', summary: 'Average ignores recovery',
+    paths: ['src/boletim/media.ts'], updated_at: '2026-09-01T00:00:00Z', stale: { repo: 'louza', sha: 'ccccccc', date: '2026-10-12', subject: 'fix' } }]);
+  await sessionStart('s38');
+  await prompt('s38', 'pedido');
+  const out = await edit('s38', { tool_input: { file_path: path.join(ws.root, 'louza', 'src', 'boletim', 'media.ts'), content: 'x' } });
+  assert.match(out.hookSpecificOutput.additionalContext, /louza\/DEBT-MEDIA · Average ignores recovery ⚠ arquivo mudou depois desta nota: louza@ccccccc \(2026-10-12\)/);
 });

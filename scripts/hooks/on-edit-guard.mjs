@@ -10,7 +10,7 @@
 import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
-  callApi, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE, CLI, radarFor, loadPathsIndex,
+  callApi, upsertReminder, apiUrl, DEFAULT_MODULE, STAGE, CLI, radarFor, loadPathsIndex, staleNote,
 } from './hook-lib.mjs';
 
 const input = readStdinJson();
@@ -33,7 +33,7 @@ if (!state.radarSeen.includes(seenKey)) {
   if (rows.length) {
     state.radarSeen.push(seenKey);
     radar.push(`Radar da base para ${path.basename(target)} (o que já se sabe deste arquivo; detalhes: ${CLI} get <ID> --project <projeto>):`,
-      ...rows.map((r) => `- ${r.project_id}/${r.id} · ${String(r.summary).slice(0, 180)}`));
+      ...rows.map((r) => `- ${r.project_id}/${r.id} · ${String(r.summary).slice(0, 180)}${staleNote(r.stale)}`));
   }
 }
 const radarOut = (extra = {}, more = []) => {

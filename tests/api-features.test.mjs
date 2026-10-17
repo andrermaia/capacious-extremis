@@ -55,13 +55,14 @@ test('upsert passes supersedes through and relays retired rows and look-alikes',
   });
   try {
     const items = [
-      { id: 'NEW-1', module: 'louza', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 's', keywords: 'a, b', supersedes: 'OLD-1' },
+      { id: 'NEW-1', module: 'louza', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 's', keywords: 'a, b', supersedes: 'OLD-1', links: 'depends_on:LOUZA-X' },
       { id: 'NEW-2', module: 'louza', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 's', keywords: 'a, b' },
     ];
     const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'upsert', '--file', '-'], { input: JSON.stringify(items) });
     assert.equal(r.status, 0, r.err);
     const sent = api.calls.filter((c) => c.route === 'upsert');
     assert.equal(sent[0].body.supersedes, 'OLD-1');
+    assert.equal(sent[0].body.links, 'depends_on:LOUZA-X');
     assert.equal(sent[1].body.supersedes, null);
     const out = JSON.parse(r.out);
     assert.deepEqual(out.results[0].superseded, ['louza/OLD-1']);

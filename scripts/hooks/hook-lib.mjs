@@ -295,7 +295,7 @@ export function protocolText(project) {
     `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
-    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>"}]',
+    '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>","links":"<opcional: depends_on:ID, contradicts:ID, refers_to:ID>"}]',
     '  EOF',
     `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
     'Subagentes ficam fora do protocolo: passe a eles o contexto e grave você o que descobrirem.',
@@ -360,6 +360,14 @@ const strength = (k) => (k.strong != null ? 2 * k.strong : (k.score ?? 3 * k.hit
 const SEMANTIC_IN_PROMPT = 0.865;
 const SEMANTIC_STRONG = 0.88;
 
+// One hop of the base's graph under the row it hangs from, and the warning that an open
+// note's files changed after it was written (maybe fixed since).
+const EDGE_LABEL = {
+  'depends_on|out': 'depende de', 'depends_on|in': 'é base de', 'contradicts|out': 'contradiz', 'contradicts|in': 'contradito por',
+  'refers_to|out': 'cita', 'refers_to|in': 'citado por',
+};
+export const staleNote = (stale) => (stale ? ` ⚠ arquivo mudou depois desta nota: ${stale.repo}@${stale.sha} (${stale.date})` : '');
+
 export function hitsBlock(data, words, ownTaskIds = new Set()) {
   const minScore = words.length >= 3 ? 5 : 3;
   const minTaskHits = Math.max(2, Math.ceil(words.length / 2));
@@ -395,10 +403,13 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   // Commits whose subject holds two of the words (or one, for a one-word prompt): what changed and when.
   const commits = (data?.commits || []).filter((c) => c.score >= Math.min(6, 3 * words.length)).slice(0, 2);
   if (!knowledge.length && !tasks.length && !similar.length && !commits.length) return [];
+  const related = (data?.related || []).slice(0, 2);
+  const relatedOf = (k) => related.filter((r) => r.for === `${k.project_id}|${k.id}`)
+    .map((r) => `  ↔ ${EDGE_LABEL[`${r.kind}|${r.dir}`] || r.kind} ${r.project_id}/${r.id} · ${cut(r.summary, 110)}`);
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
-    ...knowledge.flatMap((k, i) => withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k,
-      i < 2 && strength(k) >= STRONG && (k.similarity == null || k.similarity >= EXCERPT_MIN))),
+    ...knowledge.flatMap((k, i) => [...withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}${staleNote(k.stale)}`, k,
+      i < 2 && strength(k) >= STRONG && (k.similarity == null || k.similarity >= EXCERPT_MIN)), ...relatedOf(k)]),
     ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
     ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),
