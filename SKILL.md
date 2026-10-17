@@ -47,6 +47,8 @@ Example: `Etapa 2/3 · Tarefa — TASK-M3K9... aberta pelo hook (módulo louza_f
 | `on-edit-guard.mjs` | `PreToolUse` on `Edit\|Write\|NotebookEdit` | **File radar**, for every agent (subagents too): the first edit of a file in the session shows up to 3 rows linked to it (debts first), read from the local index, no network; rows of another product stay out. Main agent only: the first edit of each turn carries the `upsert` reminder; with no task open (work resumed after the turn closed) it opens one instead of denying. **Denies** only when the API is unreachable. Subagents and files under `.agents/`, `.claude/` and `CLAUDE.md` pass straight through |
 | `on-stop.mjs` | `Stop` | **Closes the open task (`DONE`) by itself** (a task the agent closed by hand, e.g. `BLOCKED`, keeps its status; it reads the turn's CLI calls and upserts from the transcript, so no hook runs after every shell command), links the files the turn edited (repo-relative) to the rows it upserted (`POST /paths`, append); a turn that edited files under the root with 4+ tool calls and saved nothing leaves a **draft** (`DRAFT-<task>`, module `drafts`, phase `queued`, out of search and of the radar) with the prompt, the answer and the files, which the next session start lists until someone saves the real row with `"supersedes":"<draft id>"`; saves the first lines of the final answer as its result (`current_step` = `resultado: ...`, read by the next session start) and shows how many items the turn saved. Never blocks the turn; if the API is down the task stays open and the next prompt continues it |
 
+**Codex and Antigravity (agy) run the same hooks** (since 17/10/2026). Codex 0.162+ has stable hooks with the same events and fields: `install-hooks.mjs --codex` writes `~/.codex/hooks.json` (the edit guard on `apply_patch`, whose file it reads from the patch); Codex runs them only after the user trusts them once in `/hooks`. agy 1.4 has no prompt event and its own payload, and only an `ephemeralMessage` reaches the model, for one turn: `install-hooks.mjs --agy` writes one entry in `~/.gemini/config/hooks.json` that runs `scripts/hooks/agy-adapter.mjs` on `SessionStart`, `PreInvocation` (a new prompt is read from agy's JSONL transcript and goes through `on-prompt.mjs`; later model calls of the turn get the open task's line again) and `Stop` (the last answer closes the task). agy does not parse quotes in a hook command, so the skill's path must have no spaces. On both, drafts and file links stay off (their transcripts are not Claude's). The manual protocol in `AGENTS.md`/`GEMINI.md` says to skip `task-start`/`task-finish` when the context shows a task opened by the hook.
+
 Session state lives in `<tmpdir>/claude-context-hooks/<session_id>.json` (written atomically); the last module list per project is cached next to it as `modules-<project>.json`. Edits made through shell commands (`sed`, heredocs) skip the edit guard, which only matters for the reminder: the task is already open.
 
 Short acknowledgements (`ok`, `sim, pode`, `valeu`) open no task and search nothing; if the turn ends up using tools, the Stop hook opens, records and closes its task then. The session-start hook also refreshes the local read-only cache (`pull`) at most once a week, in the background, so reads during an API outage are never older than a week. `upsert` names the items saved without Portuguese `keywords` (answer field `sem_keywords` and stderr). A **new** row that shares rare words with up to two rows of its project comes back with them (`similar`, `aviso_parecidos`): update the old one, or save the new one with `"supersedes":"<old ID>"` (or `project/ID`), which retires the old row (`deprioritized`, out of search, a note in its details) and moves its file links to the new one.
@@ -62,7 +64,7 @@ Rules that every agent follows in every project and folder live in the knowledge
 | File | Content |
 |---|---|
 | `~/.claude/CLAUDE.md` | rules (Claude Code in any folder) |
-| `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` (when the folder exists) | rules + protocol without hooks (`rules/protocol-manual.md`) |
+| `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` (when the folder exists) | rules + protocol by hand, skipped when a hook opened the task (`rules/protocol-manual.md`) |
 | `<root>/CLAUDE.md` | protocol with hooks (`rules/protocol-hooks.md`) |
 | `<root>/AGENTS.md` | rules + protocol without hooks (any tool that reads `AGENTS.md`) |
 
@@ -159,7 +161,7 @@ Before writing any code or answering complex architecture queries:
 
 ### Stage 2: Execution Hook (Task Tracking)
 
-With the Claude Code hooks installed the prompt hook has already opened the task and injected its id: do not run `task-start`. The steps below are for agents without hooks (Codex, other tools).
+With the Claude Code hooks installed the prompt hook has already opened the task and injected its id: do not run `task-start`. The steps below are for agents without hooks (Codex before its hooks are trusted, other tools).
 
 1. **Start the Active Task**:
    ```bash

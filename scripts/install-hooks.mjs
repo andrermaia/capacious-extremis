@@ -6,6 +6,8 @@
 // replaced, anything else is kept. --project-settings <file> removes the old project-level
 // entries from that file, so the hooks do not run twice there.
 // Usage: node install-hooks.mjs [--home <dir>] [--project-settings <file>] [--dry-run]
+//        node install-hooks.mjs --codex [--home <dir>] [--dry-run]   (Codex: ~/.codex/hooks.json)
+//        node install-hooks.mjs --agy [--home <dir>] [--dry-run]     (agy: ~/.gemini/config/hooks.json)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +23,16 @@ export const WANTED = {
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
   PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
   Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
+};
+
+// Codex (hooks stable since 0.162) reads the same events and fields from ~/.codex/hooks.json; its
+// file edits go through apply_patch. Codex runs a new or changed hook only after the user
+// trusts it in /hooks.
+export const WANTED_CODEX = {
+  SessionStart: WANTED.SessionStart,
+  UserPromptSubmit: WANTED.UserPromptSubmit,
+  PreToolUse: [{ matcher: '^apply_patch$', hooks: WANTED.PreToolUse[0].hooks }],
+  Stop: WANTED.Stop,
 };
 
 // Ours: any of the five protocol hooks, wherever the skill was installed (its folder name varies).
@@ -67,11 +79,51 @@ export function install({ home = os.homedir(), projectSettings = null, dryRun = 
   return report;
 }
 
+// The same hooks for Codex, in ~/.codex/hooks.json (anything else in that file is kept).
+export function installCodex({ home = os.homedir(), dryRun = false } = {}) {
+  const file = path.join(home, '.codex', 'hooks.json');
+  const config = readJson(file);
+  strip(config);
+  config.hooks ||= {};
+  for (const [event, groups] of Object.entries(WANTED_CODEX)) config.hooks[event] = [...(config.hooks[event] || []), ...groups];
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  }
+  return { status: 'ok', codex: file, events: Object.keys(WANTED_CODEX), trust: 'run /hooks in Codex once to review and trust them' };
+}
+
+// The Antigravity CLI (agy) reads ~/.gemini/config/hooks.json: one named entry per hook, events
+// under it. agy has no prompt event and its own payload, so its events go through
+// agy-adapter.mjs; it does not parse quotes in a command, so the path must have no spaces.
+export const AGY_ENTRY = 'managing-system-context';
+export function installAgy({ home = os.homedir(), dryRun = false } = {}) {
+  const file = path.join(home, '.gemini', 'config', 'hooks.json');
+  if (/\s/.test(hooksDir)) throw new Error(`agy cannot run a hook whose path has spaces: ${hooksDir}`);
+  const config = readJson(file);
+  const cmd = (event) => ({ type: 'command', command: `node ${hooksDir}/agy-adapter.mjs ${event}`, timeout: 30 });
+  config[AGY_ENTRY] = { SessionStart: [cmd('SessionStart')], PreInvocation: [cmd('PreInvocation')], Stop: [cmd('Stop')] };
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  }
+  return { status: 'ok', agy: file, events: Object.keys(config[AGY_ENTRY]) };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const arg = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : null; };
   try {
-    console.log(JSON.stringify(install({ home: arg('home') || os.homedir(), projectSettings: arg('project-settings'), dryRun: argv.includes('--dry-run') }), null, 2));
+    const home = arg('home') || os.homedir();
+    if (argv.includes('--codex')) {
+      console.log(JSON.stringify(installCodex({ home, dryRun: argv.includes('--dry-run') }), null, 2));
+      process.exit(0);
+    }
+    if (argv.includes('--agy')) {
+      console.log(JSON.stringify(installAgy({ home, dryRun: argv.includes('--dry-run') }), null, 2));
+      process.exit(0);
+    }
+    console.log(JSON.stringify(install({ home, projectSettings: arg('project-settings'), dryRun: argv.includes('--dry-run') }), null, 2));
   } catch (err) {
     console.error(JSON.stringify({ status: 'error', error: err.message }));
     process.exitCode = 1;

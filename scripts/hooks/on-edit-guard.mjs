@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse hook (Edit|Write|NotebookEdit): makes sure a task is open before
+// PreToolUse hook (Claude Code: Edit|Write|NotebookEdit; Codex: apply_patch): makes sure a task is open before
 // the main agent edits files. The prompt hook normally opened it already; when
 // work resumes after the turn closed it (a background subagent finished, for
 // instance) this hook opens a new one instead of denying the edit. It denies
@@ -18,8 +18,11 @@ const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: nothing to track
 if (!apiUrl()) process.exit(0); // no API configured on this machine: session start says so
 
-const target = String(input.tool_input?.file_path || input.tool_input?.notebook_path || '').replace(/\\/g, '/');
-if (/\/(\.agents|\.claude)\//.test(target) || /\/CLAUDE\.md$/.test(target)) process.exit(0);
+// Codex edits through apply_patch: the file is named inside the patch, relative to cwd.
+const patched = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/m.exec(String(input.tool_input?.command || ''))?.[1]?.trim();
+const target = String(input.tool_input?.file_path || input.tool_input?.notebook_path
+  || (patched ? path.resolve(input.cwd || process.cwd(), patched) : '')).replace(/\\/g, '/');
+if (/\/(\.agents|\.claude|\.codex)\//.test(target) || /\/(CLAUDE|AGENTS)\.md$/.test(target)) process.exit(0);
 
 const state = loadState(input.session_id);
 

@@ -418,6 +418,57 @@ test('the file radar warns once per file, for subagents too, from the index sess
   assert.equal(api.routes('tasks/start').length, 1);
 });
 
+test('the radar reads the file of a Codex apply_patch, relative to cwd', async () => {
+  api.setPaths([{ project_id: 'louza', id: 'GOTCHA-BOLETO', module: 'louza', knowledge_type: 'technical_debt', summary: 'boleto keeps the old due date', paths: ['src/boleto/boleto.service.ts'], updated_at: '2026-09-01T00:00:00Z' }]);
+  await sessionStart('s33');
+  await prompt('s33', 'pedido');
+  const patch = '*** Begin Patch\n*** Update File: src/boleto/boleto.service.ts\n@@\n-a\n+b\n*** End Patch';
+  const out = await edit('s33', { tool_name: 'apply_patch', cwd: path.join(ws.root, 'louza'), tool_input: { command: patch } });
+  assert.match(out.hookSpecificOutput.additionalContext, /Radar da base para boleto\.service\.ts[\s\S]*louza\/GOTCHA-BOLETO/);
+  const own = await edit('s33', { tool_name: 'apply_patch', cwd: ws.root, tool_input: { command: '*** Begin Patch\n*** Add File: AGENTS.md\n+x\n*** End Patch' } });
+  assert.equal(own, null);
+});
+
+// agy runs the adapter with the event as its argument and its own payload on stdin.
+function agy(event, payload) {
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env, CONTEXT_API_URL: api.url, CONTEXT_API_TOKEN: 'test', TEMP: ws.tmp, TMP: ws.tmp, TMPDIR: ws.tmp,
+      HOME: ws.base, USERPROFILE: ws.base, CONTEXT_SYNC_RULES: '0', NODE_NO_WARNINGS: '1',
+    };
+    delete env.CLAUDE_PROJECT_DIR;
+    const child = spawn(process.execPath, [hook('agy-adapter.mjs'), event], { env, cwd: ws.base });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', reject);
+    child.on('close', () => resolve(JSON.parse(out || 'null')));
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+test('agy: the adapter turns agy events and its transcript into the session, prompt and stop hooks', async () => {
+  const transcript = path.join(ws.base, 'transcript_full.jsonl');
+  const write = (steps) => fs.writeFileSync(transcript, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`);
+  const common = { conversationId: 'c1', workspacePaths: [ws.root.split(path.sep).join('/')], transcriptPath: transcript, modelName: 'gemini' };
+  const start = await agy('SessionStart', common);
+  assert.match(start.injectSteps[0].ephemeralMessage, /\[managing-system-context\] Início de sessão/);
+  const ask = { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>\ncorrija o boletim do louza\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nhora local\n</ADDITIONAL_METADATA>' };
+  write([ask]);
+  const first = await agy('PreInvocation', { ...common, invocationNum: 0, initialNumSteps: 1 });
+  assert.match(first.injectSteps[0].ephemeralMessage, /Tarefa TASK-\S+ \(módulo \S+\) aberta pelo hook/);
+  assert.equal(api.routes('tasks/start')[0].body.desc, 'corrija o boletim do louza');
+  // Later model calls of the same turn: only the task line, so the agent does not open another.
+  const again = await agy('PreInvocation', { ...common, invocationNum: 1, initialNumSteps: 1 });
+  assert.match(again.injectSteps[0].ephemeralMessage, /^\[managing-system-context\] Tarefa TASK-\S+ .*aberta pelo hook/);
+  assert.equal(api.routes('tasks/start').length, 1);
+  write([ask, { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Corrigi o boletim do louza.' }]);
+  assert.deepEqual(await agy('Stop', { ...common, executionNum: 0, fullyIdle: true, terminationReason: 'NO_TOOL_CALL' }), {});
+  assert.deepEqual(api.routes('tasks/finish').map((c) => c.body.status), ['DONE']);
+  assert.match(api.routes('tasks/step').at(-1).body.step, /^resultado: Corrigi o boletim do louza\./);
+  // Outside a project root the adapter changes nothing.
+  assert.deepEqual(await agy('SessionStart', { ...common, conversationId: 'c2', workspacePaths: [ws.tmp.split(path.sep).join('/')] }), {});
+});
+
 test('on-stop links the files a turn edited to the rows it saved', async () => {
   await prompt('s32', 'pedido');
   fs.mkdirSync(path.join(ws.root, 'louza', '.git'), { recursive: true });
