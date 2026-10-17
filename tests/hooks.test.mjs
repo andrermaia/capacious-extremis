@@ -567,3 +567,14 @@ test('a benchmark session saves its result where no later search or session star
   const step = api.routes('tasks/step').at(-1).body.step;
   assert.match(step, /^ab-test resultado: Resposta do teste\./);
 });
+
+test('commits come from the products the request names; at the root with none named, no commits', async () => {
+  await prompt('s42b', 'corrija o boletim do louza');
+  const named = api.routes('search').at(-1).query;
+  assert.equal(named.commit_projects, 'louza');
+  assert.equal(named.commits, '3');
+  await prompt('s42c', 'pode começar o plano de melhorias');
+  const none = api.routes('search').at(-1).query;
+  assert.equal(none.commits, '0');
+  assert.equal(none.commit_projects, undefined);
+});

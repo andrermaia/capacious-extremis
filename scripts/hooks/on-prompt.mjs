@@ -3,10 +3,11 @@
 // base with the words of the prompt and injects the best hits, so the agent rarely needs a
 // query turn of its own. With the session context in place it injects only that; without
 // it (no session-start hook), also the module list and the whole protocol.
+import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
   runCliAsync, callApi, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
-  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, STAGE,
+  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, productsNamed, STAGE,
 } from './hook-lib.mjs';
 
 // A task left open longer than this belongs to an old turn (resumed session): close it.
@@ -57,8 +58,14 @@ if (trivial && !current) {
 // The agent's first move used to be a query/search turn that re-read the whole context:
 // the hook searches the base with the prompt's words instead, in parallel.
 const words = notice || trivial ? [] : searchWords(prompt);
+// Commits only from the products the request names, or the session's product; at the root,
+// with no product named, none (17/10/2026: they were mostly other products' noise).
+const named = productsNamed(words);
+const sessionProduct = project !== path.basename(root).toLowerCase() ? project : null;
+const commitScope = named.length ? named : sessionProduct ? [sessionProduct] : [];
+const commitArgs = commitScope.length ? ['--commits', '3', '--commit-projects', commitScope.join(',')] : ['--commits', '0'];
 const searching = words.length
-  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--excerpt', '2', '--commits', '3', '--drafts', '1', '--meaning', prompt.replace(/^-+/, '').slice(0, 300), '--project', project, '--api-url', url], { timeoutMs: 8000 })
+  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--excerpt', '2', ...commitArgs, '--drafts', '1', '--meaning', prompt.replace(/^-+/, '').slice(0, 300), '--project', project, '--api-url', url], { timeoutMs: 8000 })
   : null;
 
 const [listed, task, found] = await Promise.all([listing, taskRun, searching, ...closing]);

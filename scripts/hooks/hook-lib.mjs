@@ -356,7 +356,21 @@ const RELEVANT_TOP = 0.80;
 // measured 0.86-0.90; a noisy top word hit 0.815).
 const EXCERPT_MIN = 0.845;
 // Commit subjects are short: the same bar as word hits, measured on the same prompts.
-const COMMIT_RELEVANT = 0.82;
+// Calibrated 17/10/2026 on 12 real prompts after the commits got vectors: short subjects sit
+// close in meaning (0.83-0.91) whether they matter or not, so this cuts only the clearly off
+// ones; the real filter is the product scope (commitProjects).
+const COMMIT_RELEVANT = 0.845;
+
+// The products a request names (folder prefixes and a few aliases), for the commits' scope.
+const PRODUCT_ALIASES = { louzia: 'louza', 'pia-máter': 'louza', 'pia-mater': 'louza', piamater: 'louza', idface: 'qoinpass', sponte: 'louza' };
+export function productsNamed(words) {
+  const found = new Set();
+  for (const w of words.map((x) => String(x).toLowerCase())) {
+    if (PRODUCT_ALIASES[w]) found.add(PRODUCT_ALIASES[w]);
+    for (const [prefix, project] of PROJECT_PREFIXES) if (w.startsWith(prefix)) found.add(project);
+  }
+  return [...found];
+}
 // The API's full-text search says how many rare-enough words sit in summary, id or keywords.
 const strength = (k) => (k.strong != null ? 2 * k.strong : (k.score ?? 3 * k.hits) - (k.hits ?? 0));
 const SEMANTIC_IN_PROMPT = 0.865;
@@ -528,7 +542,7 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['meaning', opts.meaning], ['drafts', opts.drafts], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['commit_projects', opts['commit-projects']], ['meaning', opts.meaning], ['drafts', opts.drafts], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;
