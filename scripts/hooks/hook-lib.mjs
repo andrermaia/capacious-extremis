@@ -293,6 +293,7 @@ export function protocolText(project) {
   return [
     'PROTOCOLO (as etapas aparecem na tela pelos hooks; não as narre):',
     `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
+    `- Mapa de sistemas e dependências (ids ENT-*): ${CLI} impact <ENT-ID> ${p} = o que é afetado se ele mudar ou cair · neighbours <ID> = todas as ligações.`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
     '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>","links":"<opcional: depends_on:ID, contradicts:ID, refers_to:ID>"}]',
@@ -374,6 +375,7 @@ export function productsNamed(words) {
 // The API's full-text search says how many rare-enough words sit in summary, id or keywords.
 const strength = (k) => (k.strong != null ? 2 * k.strong : (k.score ?? 3 * k.hits) - (k.hits ?? 0));
 const SEMANTIC_IN_PROMPT = 0.865;
+const MAP_MODULE = 'mapa';
 const SEMANTIC_STRONG = 0.88;
 
 // One hop of the base's graph under the row it hangs from, and the warning that an open
@@ -406,14 +408,17 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
       : (b.score ?? 3 * b.hits) - (a.score ?? 3 * a.hits) || (b.similarity ?? 0) - (a.similarity ?? 0)));
   // A word hit far in meaning from the prompt (API similarity) only shared loose words: out,
   // except the best one, which only needs to clear a lower bar. Without similarity, all stay.
-  const knowledge = ranked
-    .filter((k, i) => k.similarity == null || k.similarity >= RELEVANT || (i === 0 && k.similarity >= RELEVANT_TOP))
-    .slice(0, 5);
+  const fits = ranked
+    .filter((k, i) => k.similarity == null || k.similarity >= RELEVANT || (i === 0 && k.similarity >= RELEVANT_TOP));
+  // A row of the entity map (module mapa) describes a system in general: it takes a free slot,
+  // never a note's (measured 17/10/2026: ENT-EXT-SPONTE pushed out the Sponte sync procedure).
+  const notes = fits.filter((k) => k.module !== MAP_MODULE).slice(0, 5);
+  const knowledge = [...notes, ...fits.filter((k) => k.module === MAP_MODULE).slice(0, Math.min(1, 5 - notes.length))];
   const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && !ownTaskIds.has(t.id) && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
   // Rows close in meaning that no word reached (API semantic layer), after the word hits.
   const seen = new Set(knowledge.map((k) => `${k.project_id}|${k.id}`));
   const similar = (data?.semantic || [])
-    .filter((k) => k.similarity >= SEMANTIC_IN_PROMPT && !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene'].includes(k.module))
+    .filter((k) => k.similarity >= SEMANTIC_IN_PROMPT && !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene', MAP_MODULE].includes(k.module))
     .slice(0, Math.min(2, Math.max(0, 5 - knowledge.length)));
   // A strong hit brings the start of its details, so the agent rarely needs a get turn.
   let excerpts = 0;

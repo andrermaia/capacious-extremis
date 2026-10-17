@@ -8,6 +8,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseLog } from '../scripts/ingest-commits.mjs';
 import { configuredApiUrl } from '../scripts/api-config.mjs';
+import { hitsBlock } from '../scripts/hooks/hook-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(__dirname, '..');
@@ -87,6 +88,18 @@ test('search asks the API for commits too', async () => {
   }
 });
 
+test('a row of the entity map takes only a slot the notes left free', () => {
+  const row = (id, module, rank) => ({ project_id: 'louza', id, module, summary: id, score: 9, strong: 2, similarity: 0.85, rank });
+  const words = ['pagamentos', 'louza', 'sponte'];
+  const full = hitsBlock({ knowledge: [row('ENT-EXT-SPONTE', 'mapa', 9), ...[1, 2, 3, 4, 5].map((n) => row(`NOTE-${n}`, 'louza', 9 - n))] }, words);
+  assert.equal(full.filter((l) => /NOTE-/.test(l)).length, 5);
+  assert.ok(!full.some((l) => /ENT-EXT-SPONTE/.test(l)));
+  const roomy = hitsBlock({ knowledge: [row('ENT-EXT-SPONTE', 'mapa', 9), row('ENT-LOUZA-API', 'mapa', 8), row('NOTE-1', 'louza', 7)] }, words);
+  assert.match(roomy[1], /NOTE-1/);
+  assert.match(roomy[2], /ENT-EXT-SPONTE/);
+  assert.ok(!roomy.some((l) => /ENT-LOUZA-API/.test(l)));
+});
+
 test('parseLog reads subject, body without trailers, and the file list', () => {
   const text = '\x1eaaa111\x1f2026-10-01T10:00:00-03:00\x1fAndre\x1ffix(boletim): media ponderada\x1fCorpo da mensagem.\n\nCo-Authored-By: Claude <x@y>\n\x1f\nsrc/boletim.ts\nsrc/media.ts\n'
     + '\x1ebbb222\x1f2026-10-02T10:00:00-03:00\x1fAndre\x1ffeat: outra\x1f\x1f\nREADME.md\n';
@@ -134,13 +147,20 @@ test('ingest-commits sends each clone\'s new commits, oldest first, to its produ
 });
 
 // A machine with no API address configured: an empty HOME and working folder, no CONTEXT_API_URL.
+// Run from a clone installed under a projects root whose settings hold the address, the skill
+// finds it there by design, so these tests can only run from a plain clone.
+const installedRoot = path.basename(path.dirname(path.dirname(skillDir))) === '.agents' ? path.resolve(skillDir, '..', '..', '..') : null;
+const NO_API_SKIP = installedRoot && ['settings.local.json', 'settings.json'].some((n) => {
+  try { return Boolean(JSON.parse(fs.readFileSync(path.join(installedRoot, '.claude', n), 'utf8')).env?.CONTEXT_API_URL); } catch { return false; }
+}) ? 'installed under a projects root that configures CONTEXT_API_URL' : false;
+
 function bareMachine() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-noapi-'));
   const env = { CONTEXT_API_URL: '', CONTEXT_API_TOKEN: '', HOME: base, USERPROFILE: base };
   return { base, env };
 }
 
-test('the API address comes from the environment, else from the settings env of the folders above', () => {
+test('the API address comes from the environment, else from the settings env of the folders above', { skip: NO_API_SKIP }, () => {
   const { base } = bareMachine();
   const saved = process.env.CONTEXT_API_URL;
   try {
@@ -159,7 +179,7 @@ test('the API address comes from the environment, else from the settings env of 
   }
 });
 
-test('with no API address the CLI refuses writes and never falls back to the local cache', async () => {
+test('with no API address the CLI refuses writes and never falls back to the local cache', { skip: NO_API_SKIP }, async () => {
   const { base, env } = bareMachine();
   try {
     const item = [{ id: 'X-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 's', keywords: 'a' }];
@@ -172,7 +192,7 @@ test('with no API address the CLI refuses writes and never falls back to the loc
   }
 });
 
-test('with no API address the session start says so once and the other hooks stay silent', async () => {
+test('with no API address the session start says so once and the other hooks stay silent', { skip: NO_API_SKIP }, async () => {
   const { base, env } = bareMachine();
   try {
     const root = path.join(base, 'projetos');
