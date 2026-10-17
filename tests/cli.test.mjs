@@ -16,7 +16,7 @@ function runCli(args, env = {}) {
   const offline = args.includes('--api-url') ? [] : ['--no-api'];
   const result = execFileSync(
     process.execPath,
-    [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', ...offline, ...args],
+    [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', ...offline, ...args, '--json'],
     {
       encoding: 'utf8',
       env: { ...process.env, ...env },
@@ -194,7 +194,7 @@ test('CLI: upsert --file - saves a whole batch from stdin in one call', () => {
 
 test('CLI: Portuguese keywords make an English summary findable; keywords --file keeps updated_at', () => {
   runCli(['init']);
-  const run = (args, input) => JSON.parse(execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', ...args],
+  const run = (args, input) => JSON.parse(execFileSync(process.execPath, [cliPath, '--db-path', tempDbPath, '--project', 'test-proj', '--no-api', ...args, '--json'],
     { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }));
   run(['upsert', '--file', '-'], JSON.stringify([
     { id: 'K-1', module: 'm', feature: 'f', type: 'current_behavior', phase: 'implemented', summary: 'Vacation days cut by phantom absences', keywords: ['Férias', 'faltas', 'férias'] },

@@ -41,7 +41,7 @@ test('every agent file gets its block; the second run changes nothing', () => {
   const codex = m.read(m.home, '.codex', 'AGENTS.md');
   assert.match(codex, /Be blunt[\s\S]*only under `.*projetos`[\s\S]*ctx task-start/);
   assert.match(codex, /context-cli\.mjs/);
-  assert.match(m.read(m.root, 'CLAUDE.md'), /^# Global Agent Rules\n\n<!-- capacious-extremis:begin[\s\S]*run by hooks[\s\S]*do not narrate them/);
+  assert.match(m.read(m.root, 'CLAUDE.md'), /^# Global Agent Rules\n\n<!-- capacious-extremis:begin[\s\S]*run by hooks[\s\S]*do not narrate the stages/);
   assert.match(m.read(m.root, 'AGENTS.md'), /Universal agent rules[\s\S]*nothing enforces this protocol/);
   const second = sync({ home: m.home, root: m.root, rules: RULES });
   assert.equal(second.written.length, 0);

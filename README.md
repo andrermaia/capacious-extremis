@@ -71,6 +71,8 @@ node scripts/bootstrap-scan.mjs --import --db-path .agents/context.db
 | `task-finish --id <id> --status DONE` | Completes the active task |
 | `list-tasks` | Lists recent agent tasks and their status |
 
+`get`, `search`, `query`, `neighbours` and `impact` print compact text; add `--json` for the raw answer.
+
 ---
 
 ## Enforcing the Protocol with Claude Code Hooks

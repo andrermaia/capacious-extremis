@@ -1,3 +1,3 @@
 ## System Context & Knowledge Management
 
-The `managing-system-context` protocol is run by hooks: the session-start hook brings the protocol, the project context and the exact commands; each prompt hook opens the task and shows what the shared base already knows about the request; the Stop hook closes the task and saves its result. Follow what they inject. The stages show on screen through the hooks: do not narrate them. Before the final answer, record new decisions, models or debts with a single batch `upsert --file -` (English summaries, max 250 characters). If the API is down, say so and never use `--no-api`. Subagents skip this section.
+The `managing-system-context` protocol is run by hooks: they inject the project context and its exact commands at session start and on each prompt. Follow what they inject; do not narrate the stages. Subagents skip this section.

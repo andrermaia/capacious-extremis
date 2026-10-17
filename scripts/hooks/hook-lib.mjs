@@ -514,7 +514,8 @@ export function upsertReminder(taskId) {
 
 // Run the context CLI and parse its JSON stdout. Returns { ok, data, error }.
 export function runCli(root, args, { timeoutMs = 10000 } = {}) {
-  const res = spawnSync(process.execPath, [cliPath(), ...args], {
+  // The hooks read the answer as JSON: --json, since the read commands print text by default.
+  const res = spawnSync(process.execPath, [cliPath(), ...args, '--json'], {
     env: cliEnv(root),
     cwd: root,
     encoding: 'utf8',
@@ -580,7 +581,7 @@ export async function apiRequest(root, method, endpoint, body, { timeoutMs = 800
 // Same as runCli, without blocking: lets the prompt hook run list-modules and task-start together.
 export function runCliAsync(root, args, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath(), ...args], { cwd: root, env: cliEnv(root), windowsHide: true });
+    const child = spawn(process.execPath, [cliPath(), ...args, '--json'], { cwd: root, env: cliEnv(root), windowsHide: true });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);

@@ -63,10 +63,11 @@ if (listing.source === 'api' && modules.length) saveModulesCache(project, module
 
 const rows = (r) => (r.ok && Array.isArray(r.data) ? r.data : []);
 const now = Date.now();
-const age = (iso) => {
-  const h = Math.round((now - Date.parse(iso)) / 3600000);
-  return h < 1 ? 'agora há pouco' : h < 48 ? `há ${h} h` : `há ${Math.round(h / 24)} d`;
-};
+// Clock times, not "há 9 h": the block then reads the same in every session until the base
+// changes, and the prompt cache reuses it (measured 17/10/2026: rewritten in each session, it
+// was about a third of the skill's extra cost on recall questions).
+const WHEN = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const age = (iso) => WHEN.format(new Date(iso)).replace(',', '');
 const cut = (s, n) => {
   const text = String(s || '').replace(/\s+/g, ' ').trim();
   return text.length > n ? `${text.slice(0, n - 1)}…` : text;

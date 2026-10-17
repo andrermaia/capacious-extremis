@@ -153,6 +153,7 @@ Before writing any code or answering complex architecture queries:
    ```bash
    node .agents/skills/managing-system-context/scripts/context-cli.mjs get <ID>
    ```
+   *`get`, `search`, `query`, `neighbours` and `impact` print compact text (one line per row: project/id · type · phase · date · summary; `get` adds keywords, files, links and the details verbatim); `--json` prints the raw answer for scripts. Every character of a tool result is paid again on each later turn: the JSON of a `get` was 5.9k characters, 80% of them the search vector, against ~1k as text.*
 
 ---
 

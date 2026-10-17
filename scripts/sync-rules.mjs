@@ -47,7 +47,7 @@ function defaultRoot(home) {
 }
 
 export function fetchRules() {
-  const res = spawnSync(process.execPath, [cliPath, 'query', '--project', 'global', '--module', 'rules'], {
+  const res = spawnSync(process.execPath, [cliPath, 'query', '--project', 'global', '--module', 'rules', '--json'], {
     encoding: 'utf8', windowsHide: true, timeout: 15000,
   });
   let rows;

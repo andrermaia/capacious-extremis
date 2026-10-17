@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configuredApiUrl, configuredEnv, MISSING_API_URL } from './api-config.mjs';
+import { printRead } from './cli-format.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +33,7 @@ function isApiUnavailable(err) {
 
 // Flags that take no value. Without this list `--no-api query` would consume
 // "query" as the flag's value and leave the CLI with no command at all.
-const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help', 'all']);
+const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help', 'all', 'json']);
 
 // Same matching as the API's /search: lower case, no accents, one point per word found,
 // ranked by where it was found (summary or id > module or feature > details).
@@ -359,7 +360,7 @@ async function main() {
         if (options.type) qs += `&type=${encodeURIComponent(options.type)}`;
 
         const data = await requestApi(apiUrl, qs, {}, apiToken);
-        console.log(JSON.stringify(data, null, 2));
+        printRead('query', data, options);
         return;
       }
 
@@ -367,7 +368,7 @@ async function main() {
         const id = options.args[1] || options.id;
         if (!id) throw new CliError('Missing record ID for "get" command.');
         const data = await requestApi(apiUrl, `knowledge/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, {}, apiToken);
-        console.log(JSON.stringify(data, null, 2));
+        printRead('get', data, options);
         return;
       }
 
@@ -496,7 +497,7 @@ async function main() {
         // Commits that hold the words come with the rows (--commits 0 turns them off).
         qs += `&commits=${encodeURIComponent(options.commits ?? 5)}`;
         const data = await requestApi(apiUrl, qs, {}, apiToken);
-        console.log(JSON.stringify(data, null, 2));
+        printRead('search', data, options);
         return;
       }
 
@@ -505,7 +506,7 @@ async function main() {
         const id = options.id || options.args[1];
         if (!id) throw new CliError('Usage: impact <ENT-ID> [--depth 1-4] [--project <p>]');
         const qs = `impact?project=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}&depth=${encodeURIComponent(options.depth || 3)}`;
-        console.log(JSON.stringify(await requestApi(apiUrl, qs, {}, apiToken), null, 2));
+        printRead('impact', await requestApi(apiUrl, qs, {}, apiToken), options);
         return;
       }
 
@@ -514,7 +515,7 @@ async function main() {
         const id = options.id || options.args[1];
         if (!id) throw new CliError('Usage: neighbours <ID> [--depth 1-3] [--project <p>]');
         const qs = `neighbours?project=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}&depth=${encodeURIComponent(options.depth || 2)}`;
-        console.log(JSON.stringify(await requestApi(apiUrl, qs, {}, apiToken), null, 2));
+        printRead('neighbours', await requestApi(apiUrl, qs, {}, apiToken), options);
         return;
       }
     }
@@ -590,7 +591,7 @@ async function main() {
       query += ' ORDER BY updated_at DESC';
 
       const rows = db.prepare(query).all(...params);
-      console.log(JSON.stringify(rows, null, 2));
+      printRead('query', rows, options);
       break;
     }
 
@@ -605,7 +606,7 @@ async function main() {
         console.log(JSON.stringify({ error: 'Not found', id }, null, 2));
         process.exitCode = 1;
       } else {
-        console.log(JSON.stringify(row, null, 2));
+        printRead('get', row, options);
       }
       break;
     }
@@ -769,7 +770,7 @@ async function main() {
       const terms = searchTerms(options.args.slice(1).join(' ') || options.q || '');
       if (!terms.length) throw new CliError('Usage: search <words> [--project <p>] [--all] [--limit <n>]');
       const limit = Math.min(parseInt(options.limit, 10) || 15, 50);
-      console.log(JSON.stringify(searchLocal(db, terms, searchScope(options, projectId), limit), null, 2));
+      printRead('search', searchLocal(db, terms, searchScope(options, projectId), limit), options);
       break;
     }
 
@@ -793,7 +794,8 @@ async function main() {
           'search <words> [--all] [--limit <n>]   (this project + global; --all spans every project)',
           'neighbours <ID> [--depth 1-3]   (rows linked to it through the base\'s edges, any kind)',
           'impact <ENT-ID> [--depth 1-4]   (map of entities: what depends on it — calls, notifies, auth_via, stores_in, runs_on, deploys_via, depends_on)',
-          'pull   (refresh the local read-only cache from the API)'
+          'pull   (refresh the local read-only cache from the API)',
+          'get, search, query, neighbours and impact print compact text; --json prints the raw answer'
         ],
         target: 'the API at CONTEXT_API_URL (environment or the "env" block of .claude/settings.local.json); --no-api forces the local SQLite cache',
         auth: 'CONTEXT_API_TOKEN (or --api-token) is required by the API'

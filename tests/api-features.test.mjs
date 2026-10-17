@@ -79,7 +79,7 @@ test('upsert passes supersedes through and relays retired rows and look-alikes',
 test('search asks the API for commits too', async () => {
   const api = await fakeApi({ search: () => ({ knowledge: [], tasks: [], semantic: [], commits: [{ repo: 'louza', sha: 'abc123456', subject: 'fix(boletim): media' }] }) });
   try {
-    const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'search', 'boletim', 'media']);
+    const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'search', 'boletim', 'media', '--json']);
     assert.equal(r.status, 0, r.err);
     assert.equal(api.calls[0].query.commits, '5');
     assert.equal(JSON.parse(r.out).commits[0].repo, 'louza');
@@ -102,6 +102,42 @@ test('get of a missing record says so and does not blame the API', async () => {
     assert.doesNotMatch(r.out + r.err, /unavailable|local cache/);
   } finally {
     server.close();
+  }
+});
+
+test('read commands print compact text without the search machinery; --json keeps the raw answer', async () => {
+  const row = {
+    id: 'LOUZA-X', project_id: 'louza', module: 'louza', feature: 'importacao', knowledge_type: 'architecture_decision', phase: 'implemented',
+    tasks_progress: null, summary: 'Sponte payment sync, manual.', details: 'Flow: puxar-pagamentos.mjs\nthen cruzar.mjs', keywords: 'sponte, pagamentos',
+    updated_at: '2026-10-16T18:07:15.821Z', paths: ['cruzar.mjs'], embedding_v: `[${Array(384).fill('0.0123').join(',')}]`,
+    links: [{ dir: 'out', kind: 'depends_on', project_id: 'louza', id: 'LOUZA-Y', phase: 'implemented', summary: 'the importer' }],
+  };
+  const api = await fakeApi({
+    'knowledge/LOUZA-X': () => row,
+    search: () => ({ query: 'sponte', scope: ['louza', 'global'], semantic: [], knowledge: [{ ...row, details: undefined, score: 8, hits: 3, strong: 2, rank: 5.8, similarity: 0.88 }],
+      related: [{ for: 'louza|LOUZA-X', dir: 'out', kind: 'depends_on', project_id: 'louza', id: 'LOUZA-Y', summary: 'the importer' }],
+      tasks: [{ id: 'TASK-1', project_id: 'louza', module: 'louza', task_description: 'sincronizar o Sponte', status: 'DONE', current_step: 'Task started', updated_at: '2026-10-09T03:03:55.435Z' }],
+      commits: [{ repo: 'louza', sha: '02688e9d2', date: '2026-10-05', subject: 'fix(importacao): recarga' }] }),
+  });
+  try {
+    const get = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'get', 'LOUZA-X']);
+    assert.equal(get.status, 0, get.err);
+    assert.match(get.out, /^louza\/LOUZA-X\nmódulo louza · feature importacao · architecture_decision · implemented · atualizado 16\/10\/2026\nResumo: Sponte payment sync, manual\./);
+    assert.match(get.out, /Arquivos: cruzar\.mjs\nLigações:\n- → depends_on louza\/LOUZA-Y \(implemented\) · the importer\nDetalhes:\nFlow: puxar-pagamentos\.mjs\nthen cruzar\.mjs/);
+    assert.doesNotMatch(get.out, /embedding|0\.0123/);
+    const search = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'search', 'sponte']);
+    assert.equal(search.out.trim(), [
+      'Busca "sponte" em louza, global: 1 linha(s)',
+      '- louza/LOUZA-X · architecture_decision · implemented · 16/10/2026 · Sponte payment sync, manual.',
+      'Ligações:', '- louza/LOUZA-X → depends_on louza/LOUZA-Y · the importer',
+      'Tarefas:', '- TASK-1 · louza/louza · DONE · 09/10/2026 · sincronizar o Sponte',
+      'Commits:', '- louza@02688e9 · 2026-10-05 · fix(importacao): recarga',
+    ].join('\n'));
+    const raw = JSON.parse((await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'get', 'LOUZA-X', '--json'])).out);
+    assert.equal(raw.details, row.details);
+    assert.equal(raw.embedding_v, undefined);
+  } finally {
+    api.close();
   }
 });
 
@@ -233,7 +269,7 @@ test('with no API address the session start says so once and the other hooks sta
 test('neighbours asks the API for the rows linked to a row, up to the depth given', async () => {
   const api = await fakeApi({ neighbours: () => ({ engine: 'age', depth: 3, neighbours: [{ id: 'B', hops: 1 }] }) });
   try {
-    const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'neighbours', 'LOUZA-A', '--depth', '3']);
+    const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'neighbours', 'LOUZA-A', '--depth', '3', '--json']);
     assert.equal(r.status, 0, r.err);
     assert.deepEqual(api.calls[0].query, { project: 'louza', id: 'LOUZA-A', depth: '3' });
     assert.equal(JSON.parse(r.out).neighbours[0].id, 'B');
@@ -245,7 +281,7 @@ test('neighbours asks the API for the rows linked to a row, up to the depth give
 test('impact asks the API who depends on an entity', async () => {
   const api = await fakeApi({ impact: () => ({ engine: 'age', affected: [{ id: 'ENT-LOUZA-API', hops: 1, kind: 'calls' }] }) });
   try {
-    const r = await run(cliPath, ['--api-url', api.url, '--project', 'qoinmsg', 'impact', 'ENT-QOINMSG-API']);
+    const r = await run(cliPath, ['--api-url', api.url, '--project', 'qoinmsg', 'impact', 'ENT-QOINMSG-API', '--json']);
     assert.equal(r.status, 0, r.err);
     assert.deepEqual(api.calls[0].query, { project: 'qoinmsg', id: 'ENT-QOINMSG-API', depth: '3' });
     assert.equal(JSON.parse(r.out).affected[0].id, 'ENT-LOUZA-API');

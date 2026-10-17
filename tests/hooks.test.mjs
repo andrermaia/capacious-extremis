@@ -266,8 +266,10 @@ test('session start brings modules, other sessions\' work, recent results and in
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
   assert.match(ctx, /Módulos: louza, agent-context\n/);
-  assert.match(ctx, /Em andamento em outras sessões[\s\S]*TASK-FAKE1-1 · louza · .* · ajustar o boletim do louza/);
-  assert.match(ctx, /Resultados recentes:\n- .* · corrigir a rematrícula → Feito Corrigi a rematrícula de 2027: três contratos voltaram ao convênio\./);
+  // Clock times, so the block reads the same in the next session and the prompt cache reuses it.
+  assert.match(ctx, /Em andamento em outras sessões[\s\S]*TASK-FAKE1-1 · louza · \d{2}\/\d{2} \d{2}:\d{2} · ajustar o boletim do louza/);
+  assert.match(ctx, /Resultados recentes:\n- \d{2}\/\d{2} \d{2}:\d{2} · corrigir a rematrícula → Feito Corrigi a rematrícula de 2027: três contratos voltaram ao convênio\./);
+  assert.doesNotMatch(ctx, /há \d+ [hd]|agora há pouco/);
   assert.match(ctx, /LOUZA-WIP-1 \(02\/05\) · Rematricula 2027 half done/);
   assert.doesNotMatch(ctx, /OLD-WIP/);
   assert.match(ctx, /PROTOCOLO \(as etapas aparecem na tela pelos hooks; não as narre\)/);

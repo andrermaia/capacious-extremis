@@ -16,7 +16,7 @@ function runCli(args) {
   // This lifecycle runs entirely against the local SQLite file, never the shared API.
   const result = execFileSync(
     process.execPath,
-    [cliPath, '--db-path', dbPath, '--project', 'e2e-project', '--no-api', ...args],
+    [cliPath, '--db-path', dbPath, '--project', 'e2e-project', '--no-api', ...args, '--json'],
     { encoding: 'utf8' }
   );
   return JSON.parse(result.trim());
