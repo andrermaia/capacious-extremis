@@ -105,11 +105,11 @@ function workspace() {
   return { base, root, tmp, stateFile: (sid) => path.join(tmp, 'claude-context-hooks', `${sid}.json`) };
 }
 
-function runHook(ws, api, name, payload) {
+function runHook(ws, api, name, payload, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const env = {
       ...process.env, CONTEXT_API_URL: api.url, CONTEXT_API_TOKEN: 'test', CLAUDE_PROJECT_DIR: ws.root,
-      TEMP: ws.tmp, TMP: ws.tmp, TMPDIR: ws.tmp, HOME: ws.base, USERPROFILE: ws.base, CONTEXT_SYNC_RULES: '0', NODE_NO_WARNINGS: '1',
+      TEMP: ws.tmp, TMP: ws.tmp, TMPDIR: ws.tmp, HOME: ws.base, USERPROFILE: ws.base, CONTEXT_SYNC_RULES: '0', NODE_NO_WARNINGS: '1', ...extraEnv,
     };
     const child = spawn(process.execPath, [hook(name)], { env, cwd: ws.root });
     let out = '';
@@ -559,4 +559,11 @@ test('editing a file a draft covers shows the draft in the radar', async () => {
   await prompt('s40b', 'pedido');
   const out = await edit('s40b', { tool_input: { file_path: path.join(ws.root, 'louza', 'src', 'boletim', 'media.ts'), content: 'x' } });
   assert.match(out.hookSpecificOutput.additionalContext, /- rascunho louza\/DRAFT-T-2 · Rascunho: média do boletim \(trabalho que terminou sem upsert/);
+});
+
+test('a benchmark session saves its result where no later search or session start reads it', async () => {
+  await prompt('s41', 'pedido');
+  await runHook(ws, api, 'on-stop.mjs', { session_id: 's41', hook_event_name: 'Stop', last_assistant_message: 'Resposta do teste.' }, { CONTEXT_BENCH: '1' });
+  const step = api.routes('tasks/step').at(-1).body.step;
+  assert.match(step, /^ab-test resultado: Resposta do teste\./);
 });

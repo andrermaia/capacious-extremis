@@ -19,6 +19,10 @@ const root = projectRoot(input);
 if (!root) process.exit(0); // outside every project: only the universal rules apply
 if (!apiUrl()) process.exit(0); // no API configured on this machine: session start says so
 
+// A benchmark session (CONTEXT_BENCH=1, set by the A/B harness) keeps its result out of every
+// later search and session start: a past run's answer to the same question must not reach the
+// next run (the 16/10 recall runs were contaminated that way).
+const RESULT_PREFIX = process.env.CONTEXT_BENCH === '1' ? 'ab-test resultado:' : 'resultado:';
 // A draft needs a real piece of work: a few tool calls, not a one-line fix.
 const DRAFT_MIN_TOOLS = 4;
 const state = loadState(input.session_id);
@@ -58,7 +62,7 @@ const projectOf = (task) => task.project || fallbackProject;
 const outcome = open.length ? outcomeLine(finalAnswer(input)) : null;
 const latest = [...open].sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt))).at(-1);
 const saving = outcome
-  ? callApi(root, ['task-step', '--project', projectOf(latest), '--id', latest.id, '--step', `resultado: ${outcome}`, '--api-url', apiUrl()], { timeoutMs: 7000 })
+  ? callApi(root, ['task-step', '--project', projectOf(latest), '--id', latest.id, '--step', `${RESULT_PREFIX} ${outcome}`, '--api-url', apiUrl()], { timeoutMs: 7000 })
   : null;
 // Work that edited files under the root and saved nothing leaves a draft (module drafts, out of
 // search and of the radar): the next session start lists it, and whoever resumes it saves the
