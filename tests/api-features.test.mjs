@@ -192,3 +192,15 @@ test('with no API address the session start says so once and the other hooks sta
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('neighbours asks the API for the rows linked to a row, up to the depth given', async () => {
+  const api = await fakeApi({ neighbours: () => ({ engine: 'age', depth: 3, neighbours: [{ id: 'B', hops: 1 }] }) });
+  try {
+    const r = await run(cliPath, ['--api-url', api.url, '--project', 'louza', 'neighbours', 'LOUZA-A', '--depth', '3']);
+    assert.equal(r.status, 0, r.err);
+    assert.deepEqual(api.calls[0].query, { project: 'louza', id: 'LOUZA-A', depth: '3' });
+    assert.equal(JSON.parse(r.out).neighbours[0].id, 'B');
+  } finally {
+    api.close();
+  }
+});
