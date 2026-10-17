@@ -370,8 +370,10 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   const ranked = (data?.knowledge || [])
     // Rules are already in CLAUDE.md; bootstrap-scan rows only list build files.
     .filter((k) => (k.score ?? 3 * k.hits) >= minScore && !['rules', 'hygiene'].includes(k.module) && !/^Discovered module /.test(k.summary || ''))
-    // Equal word scores: the row closer in meaning to the prompt first.
-    .sort((a, b) => (b.score ?? 3 * b.hits) - (a.score ?? 3 * a.hits) || (b.similarity ?? 0) - (a.similarity ?? 0));
+    // The API's rank (word score weighed by meaning) when it sends one; else equal word
+    // scores put the row closer in meaning to the prompt first.
+    .sort((a, b) => (a.rank != null && b.rank != null ? b.rank - a.rank
+      : (b.score ?? 3 * b.hits) - (a.score ?? 3 * a.hits) || (b.similarity ?? 0) - (a.similarity ?? 0)));
   // A word hit far in meaning from the prompt (API similarity) only shared loose words: out,
   // except the best one, which only needs to clear a lower bar. Without similarity, all stay.
   const knowledge = ranked
