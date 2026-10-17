@@ -198,6 +198,15 @@ Before delivering your final response to the user:
 
 ---
 
+## Retrieval: Search, Graph and Freshness (since 17/10/2026)
+
+- **Full-text search** (`/search`): Postgres `tsvector` columns hold the Portuguese and English stems of each row as written *and* without accents (the Portuguese stemmer only joins *renovação* and *renova* with accents). Each word weighs by how rare it is in the base (a word in half of it counts 0.15, a word in ~20 rows 1.0), so loose common words never add up to a hit. The word candidates (three times the limit) are then reordered by meaning: rank = word score × 0.6–1.4 by the e5 similarity to the whole request (`?meaning=`, the prompt hook sends it). `strong` counts the rare-enough words found in summary, id or keywords; the prompt hook shows an excerpt only for strong rows at similarity ≥ 0.845 and drops rows below 0.82.
+- **Graph** (`knowledge_edges`): typed edges `supersedes`, `depends_on`, `contradicts`, `refers_to`. `upsert` takes `"links":"depends_on:ID, contradicts:project/ID"` and records `supersedes` as an edge; `get` lists a row's links; `/search` brings one hop from the best three rows (`related`; "cited by" stays out) and the prompt hook shows up to two under their row (`↔ contradiz louza/X`). `context-cli neighbours <ID> [--depth 1-3]` walks further (Apache AGE in Cypher when the database has it, a recursive query otherwise).
+- **Stale notes**: an open debt or pending item whose linked files (`paths`) got a commit after the note was last written is flagged `stale`; the prompt hook and the file radar append `⚠ arquivo mudou depois desta nota: <repo>@<sha> (<date>)`. Re-check it before trusting it.
+- **Commits**: only from the products the request names (folder prefixes and aliases such as LouzIA, Pia-Máter → louza) or the session's product; none at the root when no product is named. Subjects have e5 vectors too, but short subjects sit close in meaning whatever they say, so the product scope is the real filter.
+- **Drafts resurface**: a draft (work that ended without an upsert) comes back when a request touches its words (`?drafts=1`) or when a file it covers is edited (radar), with how to confirm it: save the real row with `"supersedes":"<draft id>"`.
+- **Benchmark sessions** (`CONTEXT_BENCH=1`, set by the A/B harness) save their result as `ab-test resultado:`, which no later search or session start reads.
+
 ## Data Model & Constraints
 
 ### Summary Field Constraints
