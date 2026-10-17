@@ -403,7 +403,8 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   // Commits whose subject holds two of the words (or one, for a one-word prompt): what changed and when.
   const commits = (data?.commits || []).filter((c) => c.score >= Math.min(6, 3 * words.length)).slice(0, 2);
   if (!knowledge.length && !tasks.length && !similar.length && !commits.length) return [];
-  const related = (data?.related || []).slice(0, 2);
+  // Graph neighbours pass the same meaning bar as word hits.
+  const related = (data?.related || []).filter((r) => r.similarity == null || r.similarity >= RELEVANT).slice(0, 2);
   const relatedOf = (k) => related.filter((r) => r.for === `${k.project_id}|${k.id}`)
     .map((r) => `  ↔ ${EDGE_LABEL[`${r.kind}|${r.dir}`] || r.kind} ${r.project_id}/${r.id} · ${cut(r.summary, 110)}`);
   return [
