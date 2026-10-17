@@ -355,6 +355,8 @@ const RELEVANT_TOP = 0.80;
 // An excerpt costs ~420 characters: only for rows clearly about the prompt (the right rows
 // measured 0.86-0.90; a noisy top word hit 0.815).
 const EXCERPT_MIN = 0.845;
+// Commit subjects are short: the same bar as word hits, measured on the same prompts.
+const COMMIT_RELEVANT = 0.82;
 // The API's full-text search says how many rare-enough words sit in summary, id or keywords.
 const strength = (k) => (k.strong != null ? 2 * k.strong : (k.score ?? 3 * k.hits) - (k.hits ?? 0));
 const SEMANTIC_IN_PROMPT = 0.865;
@@ -366,6 +368,8 @@ const EDGE_LABEL = {
   'depends_on|out': 'depende de', 'depends_on|in': 'é base de', 'contradicts|out': 'contradiz', 'contradicts|in': 'contradito por',
   'refers_to|out': 'cita', 'refers_to|in': 'citado por',
 };
+export const draftLine = (d) => `- rascunho ${d.project_id}/${d.id} · ${String(d.summary || '').replace(/\s+/g, ' ').slice(0, 120)} `
+  + `(trabalho que terminou sem upsert; ao concluir, grave a linha real com "supersedes":"${d.id}")`;
 export const staleNote = (stale) => (stale ? ` ⚠ arquivo mudou depois desta nota: ${stale.repo}@${stale.sha} (${stale.date})` : '');
 
 export function hitsBlock(data, words, ownTaskIds = new Set()) {
@@ -400,9 +404,14 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     excerpts++;
     return [line, `  ↳ ${cut(k.excerpt, 420)}`];
   };
-  // Commits whose subject holds two of the words (or one, for a one-word prompt): what changed and when.
-  const commits = (data?.commits || []).filter((c) => c.score >= Math.min(6, 3 * words.length)).slice(0, 2);
-  if (!knowledge.length && !tasks.length && !similar.length && !commits.length) return [];
+  // Commits whose subject holds two of the words (or one, for a one-word prompt): what changed
+  // and when; with vectors, the far in meaning stay out like word hits do.
+  const commits = (data?.commits || [])
+    .filter((c) => c.score >= Math.min(6, 3 * words.length) && (c.similarity == null || c.similarity >= COMMIT_RELEVANT))
+    .slice(0, 2);
+  // Unconfirmed work the request touches: whoever resumes it saves the real row.
+  const drafts = (data?.drafts || []).slice(0, 1);
+  if (!knowledge.length && !tasks.length && !similar.length && !commits.length && !drafts.length) return [];
   // Graph neighbours pass the same meaning bar as word hits.
   const related = (data?.related || []).filter((r) => r.similarity == null || r.similarity >= RELEVANT).slice(0, 2);
   const relatedOf = (k) => related.filter((r) => r.for === `${k.project_id}|${k.id}`)
@@ -414,6 +423,7 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
     ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),
+    ...drafts.map((d) => draftLine(d)),
   ];
 }
 
@@ -518,7 +528,7 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['meaning', opts.meaning], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['meaning', opts.meaning], ['drafts', opts.drafts], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;

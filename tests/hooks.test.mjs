@@ -69,10 +69,12 @@ function fakeApi() {
           const commits = url.searchParams.get('commits') ? [
             { repo: 'louza', sha: 'abc123456', project_id: 'louza', date: '2026-10-01', subject: 'fix(boletim): media ponderada do louza', score: 6, hits: 2 },
             { repo: 'louza', sha: 'def999999', project_id: 'louza', date: '2026-09-01', subject: 'chore: louza deps', score: 3, hits: 1 },
+            { repo: 'maestro', sha: 'fff111111', project_id: 'projetos', date: '2026-10-15', subject: 'feat(daemon): boletim louza words, other meaning', score: 6, hits: 2, similarity: 0.79 },
           ] : undefined;
           const related = [{ for: 'louza|LOUZA-BOLETIM-1', dir: 'out', kind: 'contradicts', project_id: 'louza', id: 'LOUZA-BOLETIM-OLD', summary: 'Old rule: simple mean' }];
           for (const k of knowledge) if (k.id === 'LOUZA-BOLETIM-1') k.stale = { repo: 'louza', sha: 'abc1234', date: '2026-10-10', subject: 'fix(boletim)' };
-          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits, related };
+          const drafts = url.searchParams.get('drafts') ? [{ project_id: 'louza', id: 'DRAFT-T-1', summary: 'Rascunho: ajustar o boletim do louza → feito em parte' }] : undefined;
+          return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits, related, drafts };
         },
       }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -541,4 +543,20 @@ test('the file radar warns when an open note\'s file changed after it', async ()
   await prompt('s38', 'pedido');
   const out = await edit('s38', { tool_input: { file_path: path.join(ws.root, 'louza', 'src', 'boletim', 'media.ts'), content: 'x' } });
   assert.match(out.hookSpecificOutput.additionalContext, /louza\/DEBT-MEDIA · Average ignores recovery ⚠ arquivo mudou depois desta nota: louza@ccccccc \(2026-10-12\)/);
+});
+
+test('a commit far in meaning stays out; a draft the request touches comes with how to confirm it', async () => {
+  const out = await prompt('s39', 'corrija o boletim do louza');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.equal(api.routes('search')[0].query.drafts, '1');
+  assert.doesNotMatch(ctx, /fff1111/);
+  assert.match(ctx, /- rascunho louza\/DRAFT-T-1 · Rascunho: ajustar o boletim do louza → feito em parte \(trabalho que terminou sem upsert; ao concluir, grave a linha real com "supersedes":"DRAFT-T-1"\)/);
+});
+
+test('editing a file a draft covers shows the draft in the radar', async () => {
+  api.setPaths([{ project_id: 'louza', id: 'DRAFT-T-2', module: 'drafts', knowledge_type: 'current_behavior', phase: 'queued', summary: 'Rascunho: média do boletim', paths: ['src/boletim/media.ts'], updated_at: '2026-10-15T00:00:00Z', draft: true }]);
+  await sessionStart('s40b');
+  await prompt('s40b', 'pedido');
+  const out = await edit('s40b', { tool_input: { file_path: path.join(ws.root, 'louza', 'src', 'boletim', 'media.ts'), content: 'x' } });
+  assert.match(out.hookSpecificOutput.additionalContext, /- rascunho louza\/DRAFT-T-2 · Rascunho: média do boletim \(trabalho que terminou sem upsert/);
 });
