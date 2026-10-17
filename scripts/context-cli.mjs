@@ -25,7 +25,9 @@ function isApiUnavailable(err) {
   const match = /^API error \((\d{3})\)/.exec(err.message || '');
   if (!match) return true; // fetch itself failed: DNS, TLS, timeout, refused
   const status = Number(match[1]);
-  return status === 404 || status === 408 || status === 429 || status >= 500;
+  // A 404 naming a record is an answer (no such row); any other 404 is a missing route.
+  if (status === 404) return !/Record ".*" not found/.test(err.message);
+  return status === 408 || status === 429 || status >= 500;
 }
 
 // Flags that take no value. Without this list `--no-api query` would consume

@@ -88,6 +88,23 @@ test('search asks the API for commits too', async () => {
   }
 });
 
+test('get of a missing record says so and does not blame the API', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Record "NOPE-1" not found in project "louza"' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/v1/context`;
+    const r = await run(cliPath, ['--api-url', url, '--project', 'louza', 'get', 'NOPE-1']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.out + r.err, /NOPE-1\\" not found/);
+    assert.doesNotMatch(r.out + r.err, /unavailable|local cache/);
+  } finally {
+    server.close();
+  }
+});
+
 test('a row of the entity map takes only a slot the notes left free', () => {
   const row = (id, module, rank) => ({ project_id: 'louza', id, module, summary: id, score: 9, strong: 2, similarity: 0.85, rank });
   const words = ['pagamentos', 'louza', 'sponte'];
