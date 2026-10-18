@@ -60,7 +60,7 @@ md = re.test(md) ? md.replace(re, block) : `${md.trim()}\n\n${block}\n`.trimStar
 fs.writeFileSync(claudeMdPath, md);
 
 // The universal rules come from the knowledge base; a failure here must not break the setup.
-const rules = spawnSync(process.execPath, [path.join(skill, 'scripts', 'sync-rules.mjs'), '--no-root', '--quiet'], { encoding: 'utf8' });
+const rules = spawnSync(process.execPath, [path.join(skill, 'scripts', 'sync-rules.mjs'), '--no-root', '--quiet'], { encoding: 'utf8', windowsHide: true });
 const rulesNote = rules.status === 0 ? 'universal rules -> ' + claudeMdPath : `universal rules NOT synced: ${(rules.stderr || '').trim().slice(0, 200)}`;
 
 console.log(`hooks -> ${settingsPath}\nprotocol -> ${claudeMdPath}\n${rulesNote}`);

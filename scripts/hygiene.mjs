@@ -153,7 +153,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const fix = argv.includes('--fix');
   const data = await api('export');
-  const drift = spawnSync(process.execPath, [path.join(here, 'sync-rules.mjs'), '--dry-run'], { encoding: 'utf8', env: { ...process.env, CONTEXT_API_TOKEN: token() } });
+  const drift = spawnSync(process.execPath, [path.join(here, 'sync-rules.mjs'), '--dry-run'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, CONTEXT_API_TOKEN: token() } });
   let rulesDrift = [];
   try { rulesDrift = JSON.parse(drift.stdout).written || []; } catch {}
   const findings = analyse({ knowledge: data.system_knowledge, tasks: data.agent_tasks, memory: memoryFacts(), rulesDrift });

@@ -19,7 +19,7 @@ const MAX = Number(arg('--max', 3000));
 const quiet = process.argv.includes('--quiet');
 const log = (...a) => { if (!quiet) console.log(...a); };
 
-const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 
 function mainRef(dir) {
   for (const ref of ['origin/main', 'origin/master', 'main', 'master']) {
