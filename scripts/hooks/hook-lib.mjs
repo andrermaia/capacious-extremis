@@ -165,9 +165,11 @@ export function saveModulesCache(project, modules) {
 }
 
 // The user prompt becomes the task description: no IDE/system wrappers, one line, short.
+// maestro-continuity: the history Maestro hands to another LLM with the user's message; the
+// task and the search take only the user's words (the block names the base tasks itself).
 export function cleanPrompt(prompt) {
   return String(prompt || '')
-    .replace(/<(ide_selection|ide_opened_file|system-reminder|pasted_content)[^>]*>[\s\S]*?<\/\1>/g, ' ')
+    .replace(/<(ide_selection|ide_opened_file|system-reminder|pasted_content|maestro-continuity)[^>]*>[\s\S]*?<\/\1>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160);

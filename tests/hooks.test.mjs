@@ -348,6 +348,12 @@ test('session start shows the hygiene report while it has findings', async () =>
   assert.doesNotMatch((await sessionStart('s15')).hookSpecificOutput.additionalContext, /Faxina/);
 });
 
+test('a Maestro continuity block stays out of the task and the search', async () => {
+  await prompt('s17', 'Corrija o boletim do louza\n\n<maestro-continuity>\nRecent history: User: refatore o financeiro inteiro\n</maestro-continuity>');
+  assert.equal(api.routes('tasks/start').at(-1).body.desc, 'Corrija o boletim do louza');
+  assert.equal(api.routes('search').at(-1).query.q, 'corrija boletim louza');
+});
+
 test('a background-task notification continues the task without searching the base', async () => {
   await prompt('s16', 'corrija o boletim do louza');
   const searches = api.routes('search').length;
