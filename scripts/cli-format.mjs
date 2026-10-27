@@ -55,7 +55,17 @@ export function formatSearch(data) {
   return out.join('\n');
 }
 
-export function formatGet(row) {
+// --grep <words>: only the parts of the details (lines, or sentences of a long line) that hold
+// one of the words, so a long note costs only the part the question is about.
+const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+export function grepDetails(details, words) {
+  const terms = String(words || '').split(/[\s,]+/).map(fold).filter((w) => w.length >= 2);
+  const parts = String(details || '').split(/\n+/)
+    .flatMap((l) => (l.length > 300 ? l.split(/(?<=[.;!?])\s+/) : [l])).map((p) => p.trim()).filter(Boolean);
+  return { terms, parts, kept: parts.filter((p) => terms.some((t) => fold(p).includes(t))) };
+}
+
+export function formatGet(row, { grep = null } = {}) {
   const out = [
     ref(row),
     `módulo ${row.module} · feature ${row.feature} · ${row.knowledge_type} · ${row.phase}${row.tasks_progress ? ` ${row.tasks_progress}` : ''} · atualizado ${day(row.updated_at)}`,
@@ -73,7 +83,10 @@ export function formatGet(row) {
     if (SHOWN.has(key) || DROP.has(key) || value == null || value === '') continue;
     out.push(`${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`);
   }
-  if (row.details) out.push('Detalhes:', String(row.details));
+  if (row.details && grep && grep !== true) {
+    const { terms, parts, kept } = grepDetails(row.details, grep);
+    out.push(`Detalhes (${kept.length} de ${parts.length} trechos com ${terms.join(', ')}; sem --grep para tudo):`, ...kept);
+  } else if (row.details) out.push('Detalhes:', String(row.details));
   return out.join('\n');
 }
 
@@ -97,11 +110,11 @@ export function formatImpact(data) {
 export const plain = (v) => (Array.isArray(v) ? v.map(plain)
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !DROP.has(k)).map(([k, x]) => [k, plain(x)])) : v);
 
-export function printRead(command, data, { json = false } = {}) {
+export function printRead(command, data, { json = false, grep = null } = {}) {
   const clean = plain(data);
   const text = json || clean == null || clean.error ? null
     : command === 'search' && Array.isArray(clean.knowledge) ? formatSearch(clean)
-      : command === 'get' && clean.id ? formatGet(clean)
+      : command === 'get' && clean.id ? formatGet(clean, { grep })
         : command === 'query' && Array.isArray(clean) ? formatRows(clean)
           : command === 'neighbours' && Array.isArray(clean.neighbours) ? formatNeighbours(clean)
             : command === 'impact' && Array.isArray(clean.affected) ? formatImpact(clean)

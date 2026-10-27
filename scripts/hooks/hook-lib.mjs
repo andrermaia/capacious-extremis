@@ -300,7 +300,7 @@ export function protocolText(project) {
   const p = `--project ${project}`;
   return [
     'PROTOCOLO (as etapas aparecem na tela pelos hooks; não as narre):',
-    `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
+    `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p} (nota longa: --grep <palavras> traz só os trechos com elas)`,
     `- Mapa de sistemas e dependências (ids ENT-*): ${CLI} impact <ENT-ID> ${p} = o que é afetado se ele mudar ou cair · neighbours <ID> = todas as ligações.`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     // A short doctrine pays for itself: the billion-context study measured re-reads falling 62% from the doctrine text alone.

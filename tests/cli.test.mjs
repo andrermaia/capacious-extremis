@@ -224,3 +224,12 @@ test('CLI: an upsert without keywords says so (answer and stderr)', () => {
   const single = runCli(['upsert', '--id', 'W-3', '--module', 'm', '--feature', 'f', '--type', 'current_behavior', '--phase', 'implemented', '--summary', 's', '--keywords', 'a, b']);
   assert.equal(single.sem_keywords, undefined);
 });
+
+test('get --grep keeps only the parts of the details that hold the words (accents ignored)', async () => {
+  const { grepDetails, formatGet } = await import('../scripts/cli-format.mjs');
+  const details = 'Primeira linha sobre cobrança.\nSegunda sobre o Sicoob e o certificado.\nTerceira sobre nada.';
+  assert.deepEqual(grepDetails(details, 'sicoob cobranca').kept, ['Primeira linha sobre cobrança.', 'Segunda sobre o Sicoob e o certificado.']);
+  const text = formatGet({ id: 'X', project_id: 'p', module: 'm', feature: 'f', knowledge_type: 't', phase: 'implemented', updated_at: '2026-10-27', summary: 's', details }, { grep: 'certificado' });
+  assert.match(text, /Detalhes \(1 de 3 trechos com certificado; sem --grep para tudo\):\nSegunda sobre o Sicoob/);
+  assert.doesNotMatch(text, /Terceira/);
+});
