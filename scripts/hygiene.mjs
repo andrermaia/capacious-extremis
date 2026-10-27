@@ -10,6 +10,7 @@
 //   - drafts the Stop hook left (work that ended without an upsert) still to confirm; --fix moves
 //     those older than 21 days to deprioritized (reversible: the row stays, out of search)
 //   - notes whose linked file changed after them (re-check them; nothing is changed by itself)
+//   - the week's metrics from the transcripts (metrics.mjs)
 // --save stores the report in the base (project global, module hygiene, id HYGIENE-REPORT),
 // which the session-start hook shows while it has findings.
 // Usage: node hygiene.mjs [--fix] [--save] [--quiet]
@@ -19,6 +20,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { configuredApiUrl, MISSING_API_URL } from './api-config.mjs';
+import { collect as collectMetrics, render as renderMetrics } from './metrics.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
@@ -188,7 +190,9 @@ async function main() {
     }
   }
 
-  const report = render(findings, { fixed });
+  // The week's numbers from the transcripts: CLI-only turns, injected context, cache share.
+  const metrics = await collectMetrics({ days: 7 }).catch(() => null);
+  const report = [render(findings, { fixed }), metrics ? renderMetrics(metrics) : ''].filter(Boolean).join('\n\n');
   const summary = summaryLine(findings, { fixed });
   if (argv.includes('--save')) {
     await api('upsert?project=global', {
