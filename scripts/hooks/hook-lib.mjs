@@ -240,10 +240,15 @@ export function turnCliCalls(input) {
     const bare = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
     const out = results.get(id) || '';
     if (/\bupsert\b/.test(bare)) {
+      // Only what the API confirmed counts: a refused upsert (summary too long, API down) saved
+      // nothing, and counting it would keep the Stop draft from being written.
+      const confirmed = (out.match(/\\?"action\\?"\s*:\s*\\?"(inserted|updated|upserted)/g) || []).length;
+      const failed = !confirmed && /\\?"error\\?"\s*:|Exit code [1-9]|API (error|timeout)/i.test(out);
+      const saved = confirmed || (failed ? 0 : (bare.match(/\bupsert\b/g) || []).length);
       const project = command.match(/upsert\b[^\n]*?--project\s+["']?([\w-]+)/)?.[1];
       const ids = [...command.matchAll(/"id"\s*:\s*"([^"]+)"|--id\s+["']?([^\s"']+)/g)].map((m) => m[1] || m[2]);
-      if (project && ids.length) upserted.push({ project, ids: [...new Set(ids)] });
-      upserts += (out.match(/\\?"action\\?"\s*:\s*\\?"(inserted|updated|upserted)/g) || []).length || (bare.match(/\bupsert\b/g) || []).length;
+      if (saved && project && ids.length) upserted.push({ project, ids: [...new Set(ids)] });
+      upserts += saved;
     }
     if (/\btask-finish\b/.test(bare)) {
       for (const m of command.matchAll(/task-finish\b[^\n]*?--id\s+["']?(TASK-[A-Z0-9]+-\d+)[^\n]*?(?:--status\s+["']?([A-Z]+))?/g)) {

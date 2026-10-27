@@ -528,7 +528,7 @@ test('inside a product the digest covers that product and the cross-project rows
   assert.equal(api.routes('digest')[0].query.project, 'louza,projetos');
 });
 
-function workTranscript(name, file, { tools = 5, upsert = false } = {}) {
+function workTranscript(name, file, { tools = 5, upsert = false, upsertReply = '{"status":"ok","results":[{"id":"X-1","action":"inserted"}]}' } = {}) {
   const lines = [{ type: 'user', message: { role: 'user', content: 'pedido' } }];
   for (let i = 0; i < tools - 1; i++) {
     lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `r${i}`, name: 'Read', input: { file_path: file } }] } });
@@ -538,7 +538,7 @@ function workTranscript(name, file, { tools = 5, upsert = false } = {}) {
   lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'ok' }] } });
   if (upsert) {
     lines.push({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'u1', name: 'Bash', input: { command: 'node context-cli.mjs upsert --project louza --file - <<EOF\n[{"id":"X-1"}]\nEOF' } }] } });
-    lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: '{"status":"ok","results":[{"id":"X-1","action":"inserted"}]}' }] } });
+    lines.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: upsertReply }] } });
   }
   lines.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'Ajustei a parcela de hora extra.' }] } });
   const t = path.join(ws.base, `${name}.jsonl`);
@@ -573,6 +573,13 @@ test('no draft for a quick fix, for a turn that saved its knowledge, or for file
   await prompt('s45', 'pedido');
   await stopWith('s45', workTranscript('s45', path.join(ws.base, 'fora', 'b.ts')));
   assert.equal(api.routes('upsert').filter((c) => c.body.module === 'drafts').length, 0);
+});
+
+test('an upsert the API refused saved nothing: the draft is still written', async () => {
+  await prompt('s46', 'ajustar o boletim do louza');
+  const file = path.join(ws.root, 'louza', 'src', 'boletim.ts');
+  await stopWith('s46', workTranscript('s46', file, { upsert: true, upsertReply: 'Exit code 1\n{"error":"Summary exceeds maximum limit of 250 characters"}' }));
+  assert.equal(api.routes('upsert').filter((c) => c.body.module === 'drafts').length, 1);
 });
 
 test('a word hit far in meaning from the prompt stays out; one close in meaning stays', async () => {
