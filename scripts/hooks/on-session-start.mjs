@@ -42,6 +42,8 @@ inBackground('hygiene', 7 * DAY_MS, [scriptPath('hygiene.mjs'), '--fix', '--save
 inBackground('pull', 7 * DAY_MS, [scriptPath('context-cli.mjs'), 'pull']);
 // Commits of the repositories under the root, so a search finds what changed and when.
 inBackground('commits', 6 * 60 * 60 * 1000, [scriptPath('ingest-commits.mjs'), '--root', root, '--quiet']);
+// Finished sessions become drafts by a small model through the Batches API (off without its key).
+inBackground('consolidate', 2 * 60 * 60 * 1000, [scriptPath('consolidate.mjs'), '--quiet']);
 
 // At the root the digest spans every project; inside a product, that product and the cross-project rows.
 const digestScope = project === path.basename(root).toLowerCase() ? '' : `project=${encodeURIComponent(`${project},projetos`)}&`;
