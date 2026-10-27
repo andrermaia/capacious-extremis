@@ -164,15 +164,16 @@ export function saveModulesCache(project, modules) {
   } catch {}
 }
 
-// The user prompt becomes the task description: no IDE/system wrappers, one line, short.
+// The user prompt becomes the task description: no IDE/system wrappers, one line, short. The
+// search reads the whole prompt (max = Infinity): a long request names its file, error or ID late.
 // maestro-continuity: the history Maestro hands to another LLM with the user's message; the
 // task and the search take only the user's words (the block names the base tasks itself).
-export function cleanPrompt(prompt) {
+export function cleanPrompt(prompt, max = 160) {
   return String(prompt || '')
     .replace(/<(ide_selection|ide_opened_file|system-reminder|pasted_content|maestro-continuity)[^>]*>[\s\S]*?<\/\1>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 160);
+    .slice(0, max);
 }
 
 // Longest module name the prompt mentions as a whole word; DEFAULT_MODULE otherwise.
@@ -332,19 +333,22 @@ export function isTrivialPrompt(prompt) {
   return words.length <= 4 && words.every((w) => TRIVIAL.has(w));
 }
 
-export function searchWords(prompt) {
+// The words a search uses. Identifiers (a digit, _, . or - inside: file names, error codes, IDs,
+// versions) go first, wherever they are in the prompt; then the other words in order. 8 words,
+// 10 for a long prompt.
+export function searchWords(prompt, max = String(prompt || '').length > 160 ? 10 : 8) {
   const words = String(prompt || '').toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_.-]*/gu) || [];
   const seen = new Set();
-  const out = [];
+  const ids = [];
+  const plain = [];
   for (const w of words) {
     const clean = w.replace(/[.-]+$/, '');
     if (clean.length < 4 && !/\d/.test(clean)) continue;
     if (STOP_WORDS.has(clean) || seen.has(clean)) continue;
     seen.add(clean);
-    out.push(clean);
-    if (out.length === 8) break;
+    (/[\d_.-]/.test(clean) ? ids : plain).push(clean);
   }
-  return out;
+  return [...ids, ...plain].slice(0, max);
 }
 
 // The few best hits of the automatic search, in a few hundred characters. The score
@@ -559,7 +563,7 @@ export async function callApi(root, args, { timeoutMs = 8000 } = {}) {
     case 'list-tasks': endpoint = `tasks?${q([['project', project], ['status', opts.status && String(opts.status).toUpperCase()], ['limit', opts.limit]])}`; break;
     case 'query': endpoint = `query?${q([['project', project], ['module', opts.module], ['phase', opts.phase], ['type', opts.type]])}`; break;
     case 'get': endpoint = `knowledge/${encodeURIComponent(words[0] || opts.id)}?${q([['project', project]])}`; break;
-    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['commit_projects', opts['commit-projects']], ['meaning', opts.meaning], ['drafts', opts.drafts], ['project', opts.all ? null : [project, 'global'].filter(Boolean).join(',')]])}`; break;
+    case 'search': endpoint = `search?${q([['q', words.join(' ')], ['limit', opts.limit], ['excerpt', opts.excerpt], ['commits', opts.commits], ['commit_projects', opts['commit-projects']], ['meaning', opts.meaning], ['drafts', opts.drafts], ['project', opts.all ? null : opts.projects || [project, 'global'].filter(Boolean).join(',')]])}`; break;
     case 'task-start': method = 'POST'; endpoint = `tasks/start?${q([['project', project]])}`; body = { project_id: project, module: opts.module || 'general', desc: opts.desc || 'Unnamed task' }; break;
     case 'task-step': method = 'POST'; endpoint = `tasks/step?${q([['project', project]])}`; body = { project_id: project, id: opts.id, step: opts.step }; break;
     case 'task-finish': method = 'POST'; endpoint = `tasks/finish?${q([['project', project]])}`; body = { project_id: project, id: opts.id, status: String(opts.status || 'DONE').toUpperCase() }; break;

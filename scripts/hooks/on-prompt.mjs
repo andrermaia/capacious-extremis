@@ -23,6 +23,7 @@ const url = apiUrl();
 // work, it is not a request, so it is neither searched nor described by its XML.
 const notice = /^\s*<task-notification>/.test(String(input.prompt || ''));
 const prompt = notice ? 'aviso de tarefa em segundo plano' : cleanPrompt(input.prompt);
+const fullPrompt = notice ? prompt : cleanPrompt(input.prompt, Infinity);
 const state = loadState(input.session_id);
 const trivial = !notice && isTrivialPrompt(input.prompt);
 
@@ -57,15 +58,24 @@ if (trivial && !current) {
 
 // The agent's first move used to be a query/search turn that re-read the whole context:
 // the hook searches the base with the prompt's words instead, in parallel.
-const words = notice || trivial ? [] : searchWords(prompt);
+const words = notice || trivial ? [] : searchWords(fullPrompt);
 // Commits only from the products the request names, or the session's product; at the root,
 // with no product named, none (17/10/2026: they were mostly other products' noise).
 const named = productsNamed(words);
 const sessionProduct = project !== path.basename(root).toLowerCase() ? project : null;
 const commitScope = named.length ? named : sessionProduct ? [sessionProduct] : [];
 const commitArgs = commitScope.length ? ['--commits', '3', '--commit-projects', commitScope.join(',')] : ['--commits', '0'];
+// The products the request names (or the session's product) first, with projetos and global;
+// the whole base in parallel, used when the scoped search finds fewer than 2 notes. At the root
+// with no product named, the whole base only.
+const scope = commitScope.length ? [...new Set([...commitScope, 'projetos', 'global'])].join(',') : null;
+const searchArgs = (where) => ['search', ...words, ...where, '--limit', '12', '--excerpt', '2', ...commitArgs, '--drafts', '1',
+  '--meaning', fullPrompt.replace(/^-+/, '').slice(0, 300), '--project', project, '--api-url', url];
 const searching = words.length
-  ? callApi(root, ['search', ...words, '--all', '--limit', '12', '--excerpt', '2', ...commitArgs, '--drafts', '1', '--meaning', prompt.replace(/^-+/, '').slice(0, 300), '--project', project, '--api-url', url], { timeoutMs: 8000 })
+  ? Promise.all([
+    scope ? callApi(root, searchArgs(['--projects', scope]), { timeoutMs: 8000 }) : null,
+    callApi(root, searchArgs(['--all']), { timeoutMs: 8000 }),
+  ]).then(([scoped, all]) => (scoped?.ok && (scoped.data?.knowledge || []).length >= 2 ? scoped : all))
   : null;
 
 const [listed, task, found] = await Promise.all([listing, taskRun, searching, ...closing]);

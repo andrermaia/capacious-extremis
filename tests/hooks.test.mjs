@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { searchWords, cleanPrompt } from '../scripts/hooks/hook-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(__dirname, '..');
@@ -632,6 +633,20 @@ test('a benchmark session saves its result where no later search or session star
   await runHook(ws, api, 'on-stop.mjs', { session_id: 's41', hook_event_name: 'Stop', last_assistant_message: 'Resposta do teste.' }, { CONTEXT_BENCH: '1' });
   const step = api.routes('tasks/step').at(-1).body.step;
   assert.match(step, /^ab-test resultado: Resposta do teste\./);
+});
+
+test('the search reads the whole prompt: identifiers named late in a long request go first', () => {
+  const long = `${'Preciso que você olhe com calma o fluxo inteiro da matrícula, desde o cadastro até a cobrança, e me diga '.repeat(2)}por que o erro E4012 aparece em matricula.service.ts`;
+  const words = searchWords(cleanPrompt(long, Infinity));
+  assert.equal(words.length, 10);
+  assert.deepEqual(words.slice(0, 2), ['e4012', 'matricula.service.ts']);
+  assert.equal(cleanPrompt(long).length, 160);
+});
+
+test('a request naming a product searches it (with projetos and global) and the whole base in parallel', async () => {
+  await prompt('s42d', 'corrija o boletim do louza');
+  const searches = api.routes('search').slice(-2).map((c) => c.query.project ?? null).sort();
+  assert.deepEqual(searches, ['louza,projetos,global', null].sort());
 });
 
 test('commits come from the products the request names; at the root with none named, no commits', async () => {
