@@ -203,40 +203,84 @@ function readTail(file, bytes = 1024 * 1024) {
   }
 }
 
-const isPrompt = (rec) => rec.type === 'user' && typeof rec.message?.content === 'string' && !rec.isMeta;
+// A transcript as events, whichever agent wrote it: { kind: prompt | tool | result | answer }.
+// Claude Code {type, message.content}; Codex {type: event_msg, payload: item_completed}; agy
+// {step_index, source, type}; Kimi Code {type: turn.prompt | context.append_loop_event}.
+const EDIT_TOOL = /^(Edit|Write|MultiEdit|NotebookEdit|edit_file|write_file|write_to_file|replace_file_content|create_file)$/;
+const text = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => x?.text ?? (typeof x === 'string' ? x : '')).join('\n') : JSON.stringify(c ?? ''));
+export function transcriptEvents(records) {
+  const out = [];
+  const agyPending = [];
+  records.forEach((rec, n) => {
+    if (rec.message && (rec.type === 'user' || rec.type === 'assistant')) {
+      const c = rec.message.content;
+      if (rec.type === 'user' && typeof c === 'string') { if (!rec.isMeta) out.push({ kind: 'prompt' }); return; }
+      for (const b of Array.isArray(c) ? c : []) {
+        if (b?.type === 'text' && rec.type === 'assistant') out.push({ kind: 'answer', text: b.text });
+        else if (b?.type === 'tool_use') out.push({ kind: 'tool', id: b.id, name: b.name, command: b.input?.command, file: b.input?.file_path || b.input?.notebook_path });
+        else if (b?.type === 'tool_result') out.push({ kind: 'result', id: b.tool_use_id, text: text(b.content) });
+      }
+    } else if (rec.type === 'event_msg' && rec.payload?.type === 'item_completed') {
+      const it = rec.payload.item || {};
+      const id = it.id || `codex-${n}`;
+      if (it.type === 'UserMessage') out.push({ kind: 'prompt' });
+      else if (it.type === 'AgentMessage') out.push({ kind: 'answer', text: text(it.content) });
+      else if (it.type === 'CommandExecution') {
+        const cmd = Array.isArray(it.command) ? it.command.at(-1) : it.command;
+        out.push({ kind: 'tool', id, name: 'shell', command: cmd }, { kind: 'result', id, text: String(it.aggregated_output ?? '') + (it.exit_code ? `\nExit code ${it.exit_code}` : '') });
+      } else if (it.type === 'FileChange') {
+        for (const f of Object.keys(it.changes || {})) out.push({ kind: 'tool', id: `${id}-${f}`, name: 'Edit', file: f });
+      } else if (it.type === 'McpToolCall') out.push({ kind: 'tool', id, name: `${it.server}.${it.tool}` });
+    } else if (rec.step_index != null && rec.source) {
+      if (rec.type === 'USER_INPUT' && rec.source === 'USER_EXPLICIT') out.push({ kind: 'prompt' });
+      else if (rec.type === 'PLANNER_RESPONSE') {
+        if (rec.content) out.push({ kind: 'answer', text: rec.content });
+        (rec.tool_calls || []).forEach((call, i) => {
+          const args = Object.fromEntries(Object.entries(call.args || {}).map(([k, v]) => { try { return [k, JSON.parse(v)]; } catch { return [k, v]; } }));
+          const id = `agy-${rec.step_index}-${i}`;
+          agyPending.push(id);
+          out.push({ kind: 'tool', id, name: call.name, command: args.CommandLine, file: args.AbsolutePath || args.Path || args.TargetFile });
+        });
+      } else if (rec.type === 'GENERIC' && agyPending.length) {
+        // agy answers each call with a GENERIC step, in order.
+        out.push({ kind: 'result', id: agyPending.shift(), text: `${rec.content || ''}${rec.error ? `\nerror: ${rec.error}` : ''}` });
+      }
+    } else if (rec.type === 'turn.prompt') {
+      if (!rec.origin?.kind || rec.origin.kind === 'user') out.push({ kind: 'prompt' });
+    } else if (rec.type === 'context.append_loop_event') {
+      const e = rec.event || {};
+      if (e.type === 'content.part' && e.part?.type === 'text') out.push({ kind: 'answer', text: e.part.text });
+      else if (e.type === 'tool.call') out.push({ kind: 'tool', id: e.toolCallId, name: e.name, command: e.args?.command, file: e.args?.path || e.args?.file_path });
+      else if (e.type === 'tool.result') out.push({ kind: 'result', id: e.toolCallId, text: String(e.result?.output ?? '') });
+    }
+  });
+  return out;
+}
+
+// The events after the last user prompt: this turn.
+function thisTurn(events) {
+  let start = 0;
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].kind === 'prompt') { start = i + 1; break; }
+  return events.slice(start);
+}
 
 // What the agent did with the CLI in this turn (since the last user prompt): how many
 // knowledge rows it saved and which tasks it closed by hand. Read from the transcript at
-// Stop time, so no hook has to run after every shell command.
+// Stop time, so no hook has to run after every shell command; any of the four agents' formats.
 export function turnCliCalls(input) {
-  const tail = readTail(input.transcript_path);
-  let start = 0;
-  for (let i = tail.length - 1; i >= 0; i--) if (isPrompt(tail[i])) { start = i + 1; break; }
+  const turn = thisTurn(transcriptEvents(readTail(input.transcript_path)));
   const commands = new Map();
   const results = new Map();
-  for (const rec of tail.slice(start)) {
-    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) {
-      if (b?.type === 'tool_use' && ['Bash', 'PowerShell'].includes(b.name) && String(b.input?.command || '').includes('context-cli')) {
-        commands.set(b.id, String(b.input.command));
-      } else if (b?.type === 'tool_result' && commands.has(b.tool_use_id)) {
-        const c = b.content;
-        results.set(b.tool_use_id, typeof c === 'string' ? c : JSON.stringify(c ?? ''));
-      }
-    }
+  for (const e of turn) {
+    if (e.kind === 'tool' && String(e.command || '').includes('context-cli')) commands.set(e.id, String(e.command));
+    else if (e.kind === 'result' && commands.has(e.id)) results.set(e.id, e.text);
   }
   let upserts = 0;
   const finished = [];
-  let toolUses = 0;
-  const edited = new Set();
+  const tools = turn.filter((e) => e.kind === 'tool');
+  const toolUses = tools.length;
+  const edited = new Set(tools.filter((e) => EDIT_TOOL.test(e.name || '') && e.file).map((e) => String(e.file)));
   const upserted = [];
-  for (const rec of tail.slice(start)) {
-    for (const b of Array.isArray(rec.message?.content) ? rec.message.content : []) {
-      if (b?.type !== 'tool_use') continue;
-      toolUses++;
-      const f = b.input?.file_path || b.input?.notebook_path;
-      if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(b.name) && f) edited.add(String(f));
-    }
-  }
   for (const [id, command] of commands) {
     const bare = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
     const out = results.get(id) || '';
@@ -262,17 +306,14 @@ export function turnCliCalls(input) {
 
 export function finalAnswer(input) {
   if (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) return input.last_assistant_message;
-  const tail = readTail(input.transcript_path, 512 * 1024);
-  if (!tail.length) return null;
-  for (let i = tail.length - 1; i >= 0; i--) {
-    const rec = tail[i];
-    const content = rec.message?.content;
-    if (isPrompt(rec)) return null;
-    if (rec.type !== 'assistant' || !Array.isArray(content)) continue;
-    const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
-    if (text) return text;
-  }
-  return null;
+  // The last answer of this turn, in any of the four formats; parts of one message come joined.
+  const turn = thisTurn(transcriptEvents(readTail(input.transcript_path, 512 * 1024)));
+  let last = -1;
+  for (let i = turn.length - 1; i >= 0; i--) if (turn[i].kind === 'answer' && String(turn[i].text || '').trim()) { last = i; break; }
+  if (last < 0) return null;
+  let first = last;
+  while (first > 0 && turn[first - 1].kind === 'answer') first--;
+  return turn.slice(first, last + 1).map((e) => e.text).join('\n').trim() || null;
 }
 
 // One line, no markdown, for the task's current_step ("resultado: ...").
