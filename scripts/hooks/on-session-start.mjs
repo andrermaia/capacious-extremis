@@ -36,6 +36,8 @@ const state = loadState(input.session_id);
 const read = (args) => callApi(root, [...args, '--project', project, '--api-url', url], { timeoutMs: 8000 });
 
 // Background jobs, detached and throttled across sessions by stamp files.
+// The clone follows origin/main by itself (fast-forward only): every agent's hooks run these files.
+inBackground('self-update', 60 * 60 * 1000, [scriptPath('self-update.mjs'), '--quiet']);
 inBackground('sync-rules', 10 * 60 * 1000, [scriptPath('sync-rules.mjs'), '--quiet']);
 inBackground('hygiene', 7 * DAY_MS, [scriptPath('hygiene.mjs'), '--fix', '--save', '--quiet']);
 // The local cache is what reads fall back to when the API is unreachable: keep it a week fresh at most.
