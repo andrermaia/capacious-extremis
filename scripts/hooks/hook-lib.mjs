@@ -305,7 +305,8 @@ export function protocolText(project) {
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
     // A short doctrine pays for itself: the billion-context study measured re-reads falling 62% from the doctrine text alone.
     '- Contexto enxuto: não releia o que já leu nem repita a busca que o hook já fez (releia só se o arquivo mudou ou o contexto foi compactado); leia arquivos grandes por trechos (offset/limit) e procure com grep antes de abrir; varredura ampla vai para um subagente, que devolve só a conclusão; saída longa de teste ou build, filtre (tail, grep das falhas) em vez de trazê-la inteira.',
-    `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
+    // Measured 18-26/10/2026: 648 model turns did nothing but call the CLI (441 of them upserts).
+    `- Encerramento: se surgiu decisão, modelo ou débito, grave numa chamada só, em paralelo com a última ferramenta que você já ia chamar (commit, teste, push), na mesma mensagem: uma rodada só para gravar relê o contexto inteiro. ${CLI} upsert ${p} --file - <<'EOF'`,
     '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>","links":"<opcional: depends_on:ID, contradicts:ID, refers_to:ID>"}]',
     '  EOF',
     `- Tarefa travada: ${CLI} task-finish ${p} --id <TASK_ID> --status BLOCKED.`,
@@ -572,8 +573,9 @@ export function repoRelative(file, root) {
 }
 
 export function upsertReminder(taskId) {
-  return `Lembrete da ${STAGE.CLOSE}: antes da resposta final, grave numa chamada só (upsert --file -) o que este trabalho decidiu ou revelou ` +
-    `(decisão, modelo, débito; summary em inglês, até 250 caracteres). ${taskId ? `A ${taskId} fecha sozinha` : 'A tarefa fecha sozinha'} ao fim do turno.`;
+  return `Lembrete da ${STAGE.CLOSE}: grave numa chamada só (upsert --file -) o que este trabalho decidiu ou revelou ` +
+    '(decisão, modelo, débito; summary em inglês, até 250 caracteres), em paralelo com a última ferramenta que você já ia chamar (commit, teste, push), na mesma mensagem, e não numa rodada só para isso. ' +
+    `${taskId ? `A ${taskId} fecha sozinha` : 'A tarefa fecha sozinha'} ao fim do turno.`;
 }
 
 // Run the context CLI and parse its JSON stdout. Returns { ok, data, error }.
