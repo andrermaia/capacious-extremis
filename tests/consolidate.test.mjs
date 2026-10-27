@@ -34,6 +34,11 @@ test('scrub removes secrets and personal data', () => {
   assert.doesNotMatch(out, /sk-ant|123\.456|99123|a\.b@|hunter/);
   assert.match(out, /\[segredo\].*\[cpf\].*\[telefone\].*\[email\]/);
   assert.match(out, /ok$/);
+  // A memory note's line: the word, markdown, then the value in backticks.
+  const md = scrub('- **SSH:** `ssh root@host` — auth por **senha** `Abc123Xyz9` (VPS).');
+  assert.doesNotMatch(md, /Abc123Xyz9/);
+  assert.match(md, /senha\*\* `\[segredo\]`/);
+  assert.doesNotMatch(scrub("token: 'tk_live_123456'"), /tk_live/);
 });
 
 test('condense keeps prompts, answers, commands and errors, never tool output or thinking', () => {

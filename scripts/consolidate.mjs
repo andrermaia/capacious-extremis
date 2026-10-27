@@ -81,6 +81,8 @@ const SCRUB = [
   [/\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g, '[segredo]'],
   [/(Bearer\s+)[\w.~+/=-]{16,}/gi, '$1[segredo]'],
   [/((?:password|passwd|senha|secret|token|api[_-]?key)\s*[:=]\s*["']?)[^\s"',;]{6,}/gi, '$1[segredo]'],
+  // The word, then a value in backticks or quotes a few characters on ("senha** `x`", "password: 'x'").
+  [/((?:password|passwd|senha|secret|token|api[_-]?key)[^\n`'"]{0,20}[`'"])[^`'"\s]{6,}([`'"])/gi, '$1[segredo]$2'],
   [/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, '[cpf]'],
   [/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, '[cnpj]'],
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]'],
