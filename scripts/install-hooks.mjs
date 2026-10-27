@@ -22,7 +22,11 @@ const hook = (script, extra = {}) => ({ type: 'command', command: `node "${hooks
 export const WANTED = {
   SessionStart: [{ hooks: [hook('on-session-start.mjs', { timeout: 30, statusMessage: 'Contexto da sessão · carregando do Takius' })] }],
   UserPromptSubmit: [{ hooks: [hook('on-prompt.mjs', { timeout: 30, statusMessage: 'Etapa 1/3 · carregando contexto do Takius' })] }],
-  PreToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] }],
+  PreToolUse: [
+    { matcher: 'Edit|Write|NotebookEdit', hooks: [hook('on-edit-guard.mjs', { timeout: 10, statusMessage: 'Etapa 2/3 · conferindo a tarefa' })] },
+    // Test and build output summarized (Claude Code only: the others cannot rewrite a command).
+    { matcher: 'Bash', hooks: [hook('on-bash.mjs', { timeout: 5 })] },
+  ],
   Stop: [{ hooks: [hook('on-stop.mjs', { timeout: 10, statusMessage: 'Etapa 3/3 · fechando a tarefa' })] }],
 };
 
@@ -37,7 +41,7 @@ export const WANTED_CODEX = {
 };
 
 // Ours: any of the five protocol hooks, wherever the skill was installed (its folder name varies).
-const OUR_SCRIPT = /[\\/]scripts[\\/]hooks[\\/]on-(session-start|prompt|edit-guard|cli-call|stop)\.mjs"?\s*$/;
+const OUR_SCRIPT = /[\\/]scripts[\\/]hooks[\\/]on-(session-start|prompt|edit-guard|cli-call|stop|bash)\.mjs"?\s*$/;
 const ours = (group) => (group.hooks || []).some((h) => OUR_SCRIPT.test(String(h.command || '')) || String(h.command || '').includes(`${MARK}/scripts/hooks/`));
 
 // Drops our groups from a settings object; returns how many were removed.
