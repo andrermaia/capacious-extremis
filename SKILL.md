@@ -102,6 +102,18 @@ Finished sessions of Claude Code, Codex, agy and Kimi Code become drafts written
 
 Off without its own key: `CONTEXT_CONSOLIDATE_KEY_FILE` (a file holding the key) or `CONTEXT_CONSOLIDATE_API_KEY`, in the environment or the root's `.claude/settings.local.json` env block. Never `ANTHROPIC_API_KEY` there: it would move Claude Code itself to API billing. `CONTEXT_CONSOLIDATE=0` turns it off; benchmark sessions (`CONTEXT_BENCH=1`) stay out. State and the spend ledger live in `~/.claude/context-consolidate/`; `node scripts/consolidate.mjs status` prints pending batches and the last 30 days' cost (measured 26/10: ~95k input + 3.6k output tokens = US$0.006 per full window).
 
+## Context Economy (since 27/10/2026)
+
+From the billion-context / ai-memory study (AGENTCTX-FUT-BC-AIMEMORY-TOP10):
+- **Search input**: the prompt hook searches the whole prompt (the task description is still cut at 160 chars), identifiers first (file names, error codes, IDs), 10 words for a long prompt; with a product named (or the session's product) the scoped search (product, `projetos`, `global`) is used when it finds 2+ notes, else the whole base.
+- **No repeats**: a note already injected in this context (`state.shown`, keyed by project, id and `updated_at`) is named, not injected again; the session-start hook empties it (startup, resume, clear, compact). agy, whose injections last one turn, keeps no memory.
+- **Budgets**: what the prompt hook adds stays under `PROMPT_BUDGET` (2.2k chars) and the session start's variable part under `SESSION_BUDGET` (3.2k chars, protocol on top); items go in whole, in order of value, and the rest is named or counted.
+- **One protocol**: agents with hooks get the short protocol in their own rules file (`~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`, `~/.kimi-code/AGENTS.md`); the root `AGENTS.md` holds no copy of the rules, only where to find them and the manual protocol.
+- **Saving without a turn**: the protocol asks for the upsert in parallel with the last tool call the agent already makes (18-26/10: 648 model turns only called the CLI, 441 of them upserts). The protocol also carries a one-line context-hygiene doctrine.
+- **Snippets**: search excerpts open at the sentence holding the first search term (context-api `excerpt`); `get <ID> --grep <words>` prints only the parts of the details that hold them.
+- **Tool output**: in Claude Code's bypassPermissions mode, `on-bash.mjs` rewrites a whole, unfiltered test/build command (`npm test`, `node --test`, `cargo test`, `pytest`...) so its output goes to a log and the model gets the failures and the last lines (`quiet-run.mjs`), exit code kept. `CONTEXT_QUIET_RUN=0` turns it off.
+- **Hygiene**: `--fix` deprioritizes drafts unconfirmed for 21+ days (reversible); the report lists notes whose linked file changed after them.
+
 ## Kimi Code and Self-Update (since 27/10/2026)
 
 Kimi Code CLI (2.3.1) runs `[[hooks]]` tables from `~/.kimi-code/config.toml`; `install-hooks.mjs --kimi` writes four of them (SessionStart, UserPromptSubmit, PreToolUse on `^(Edit|Write)$`, Stop) between marker comments, so a reinstall replaces only those. They call `scripts/hooks/kimi-adapter.mjs`: Kimi drops SessionStart output and injects only the UserPromptSubmit stdout, so the session context is kept and printed with the first prompt; the guard passes on only a deny; the transcript is `<sessionDir>/agents/main/wire.jsonl` from `session_index.jsonl`.
