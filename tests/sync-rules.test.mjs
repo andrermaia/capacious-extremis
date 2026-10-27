@@ -42,10 +42,26 @@ test('every agent file gets its block; the second run changes nothing', () => {
   assert.match(codex, /Be blunt[\s\S]*only under `.*projetos`[\s\S]*ctx task-start/);
   assert.match(codex, /context-cli\.mjs/);
   assert.match(m.read(m.root, 'CLAUDE.md'), /^# Global Agent Rules\n\n<!-- capacious-extremis:begin[\s\S]*run by hooks[\s\S]*do not narrate the stages/);
-  assert.match(m.read(m.root, 'AGENTS.md'), /Universal agent rules[\s\S]*nothing enforces this protocol/);
+  // The root AGENTS.md comes on top of each agent's own file: no second copy of the rules or the manual protocol.
+  const rootAgents = m.read(m.root, 'AGENTS.md');
+  assert.match(rootAgents, /run by hooks[\s\S]*An agent without these hooks: read the universal rules[\s\S]*protocol-manual\.md/);
+  assert.doesNotMatch(rootAgents, /Be blunt|ctx task-start/);
   const second = sync({ home: m.home, root: m.root, rules: RULES });
   assert.equal(second.written.length, 0);
   assert.equal(second.unchanged.length, 4);
+  m.done();
+});
+
+test('an agent whose hooks are installed gets the short protocol; Kimi gets its own file', () => {
+  const m = machine();
+  fs.writeFileSync(path.join(m.home, '.codex', 'hooks.json'), '{"hooks":{"Stop":[{"hooks":[{"command":"node x/managing-system-context/scripts/hooks/on-stop.mjs"}]}]}}');
+  fs.mkdirSync(path.join(m.home, '.kimi-code'));
+  sync({ home: m.home, root: m.root, rules: RULES });
+  const codex = m.read(m.home, '.codex', 'AGENTS.md');
+  assert.match(codex, /Be blunt[\s\S]*run by hooks/);
+  assert.doesNotMatch(codex, /ctx task-start/);
+  const kimi = m.read(m.home, '.kimi-code', 'AGENTS.md');
+  assert.match(kimi, /Be blunt[\s\S]*ctx task-start/, 'Kimi without its hooks keeps the manual protocol');
   m.done();
 });
 

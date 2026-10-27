@@ -2,10 +2,11 @@
 // Renders the universal agent rules (knowledge base, project "global", module "rules")
 // and the context protocol into every agent's instruction file:
 //   ~/.claude/CLAUDE.md          rules                       (Claude Code, any folder)
-//   ~/.codex/AGENTS.md           rules + protocol, no hooks  (Codex, when ~/.codex exists)
-//   ~/.gemini/GEMINI.md          rules + protocol, no hooks  (Gemini/agy, when ~/.gemini exists)
+//   ~/.codex/AGENTS.md           rules + protocol            (Codex, when ~/.codex exists; short when its hooks are installed)
+//   ~/.gemini/GEMINI.md          rules + protocol            (Gemini/agy, same)
+//   ~/.kimi-code/AGENTS.md       rules + protocol            (Kimi Code, same)
 //   <root>/CLAUDE.md             protocol with hooks         (when the skill sits in <root>/.agents/skills)
-//   <root>/AGENTS.md             rules + protocol, no hooks  (any tool that reads AGENTS.md)
+//   <root>/AGENTS.md             short protocol + where the rules and manual protocol are
 // Each file gets one block between markers; text outside the block is kept. A file
 // that still holds a hand-written copy of the protocol is replaced whole, after a backup.
 // Usage: node sync-rules.mjs [--home <dir>] [--root <dir> | --no-root] [--dry-run] [--quiet]
@@ -14,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { optedIn } from './self-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(here, '..');
@@ -92,17 +94,26 @@ export function planTargets({ home, root, rulesBlock }) {
     ROOT: rootDir || '(no project root)',
     CLI: cliPath.split(path.sep).join('/'),
   });
+  // An agent whose hooks are installed gets the short protocol (the hooks inject the rest each
+  // session); only one without hooks needs the manual one. Every agent's own file carries the
+  // rules, so the root AGENTS.md (read by Codex and Kimi on top of their own) carries no copy.
+  const hooked = optedIn(home);
+  const withHooks = template('protocol-hooks.md', {});
   // ~/.claude/CLAUDE.md never counts as a legacy copy: in the cloud it also holds the
   // protocol written by cloud/install.mjs, which must stay.
   const targets = [{ file: path.join(home, '.claude', 'CLAUDE.md'), body: rulesBlock, legacy: false }];
-  for (const [dir, name] of [['.codex', 'AGENTS.md'], ['.gemini', 'GEMINI.md']]) {
+  for (const [dir, name, agent] of [['.codex', 'AGENTS.md', 'codex'], ['.gemini', 'GEMINI.md', 'agy'], ['.kimi-code', 'AGENTS.md', 'kimi']]) {
     if (fs.existsSync(path.join(home, dir))) {
-      targets.push({ file: path.join(home, dir, name), body: root ? `${rulesBlock}\n\n${manual(root)}` : rulesBlock, legacy: true });
+      const protocol = root ? (hooked[agent] ? withHooks : manual(root)) : '';
+      targets.push({ file: path.join(home, dir, name), body: protocol ? `${rulesBlock}\n\n${protocol}` : rulesBlock, legacy: true });
     }
   }
   if (root) {
-    targets.push({ file: path.join(root, 'CLAUDE.md'), body: template('protocol-hooks.md', {}), legacy: true, heading: '# Global Agent Rules' });
-    targets.push({ file: path.join(root, 'AGENTS.md'), body: `${rulesBlock}\n\n${manual(root)}`, legacy: true, heading: '# Global Agent Rules' });
+    targets.push({ file: path.join(root, 'CLAUDE.md'), body: withHooks, legacy: true, heading: '# Global Agent Rules' });
+    const cli = cliPath.split(path.sep).join('/');
+    const manualFile = path.join(skillDir, 'rules', 'protocol-manual.md').split(path.sep).join('/');
+    targets.push({ file: path.join(root, 'AGENTS.md'), legacy: true, heading: '# Global Agent Rules',
+      body: `${withHooks}\n\nAn agent without these hooks: read the universal rules (\`node ${cli} query --project global --module rules\`) and follow the manual protocol in \`${manualFile}\` (\`{{CLI}}\` there is \`node ${cli}\`) before working.` });
   }
   return targets;
 }
