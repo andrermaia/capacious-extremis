@@ -403,7 +403,18 @@ export const draftLine = (d) => `- rascunho ${d.project_id}/${d.id} · ${String(
   + `(trabalho que terminou sem upsert; ao concluir, grave a linha real com "supersedes":"${d.id}")`;
 export const staleNote = (stale) => (stale ? ` ⚠ arquivo mudou depois desta nota: ${stale.repo}@${stale.sha} (${stale.date})` : '');
 
-export function hitsBlock(data, words, ownTaskIds = new Set()) {
+// shown: what this session's context already holds ({ "project|id": updated_at }), kept in the
+// hook state and emptied when the context is (session start, compaction, clear). A row already
+// shown and unchanged is named, not repeated; the object is updated with what goes out now.
+// null for agents whose injections last one turn only (agy).
+export function hitsBlock(data, words, ownTaskIds = new Set(), shown = null) {
+  const isNew = (key, version = '') => !shown || shown[key] !== String(version || '');
+  const repeated = [];
+  const fresh = (k) => {
+    if (isNew(`${k.project_id}|${k.id}`, k.updated_at)) return true;
+    repeated.push(`${k.project_id}/${k.id}`);
+    return false;
+  };
   const minScore = words.length >= 3 ? 5 : 3;
   const minTaskHits = Math.max(2, Math.ceil(words.length / 2));
   const cut = (s, n) => {
@@ -420,16 +431,19 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   // A word hit far in meaning from the prompt (API similarity) only shared loose words: out,
   // except the best one, which only needs to clear a lower bar. Without similarity, all stay.
   const fits = ranked
-    .filter((k, i) => k.similarity == null || k.similarity >= RELEVANT || (i === 0 && k.similarity >= RELEVANT_TOP));
+    .filter((k, i) => k.similarity == null || k.similarity >= RELEVANT || (i === 0 && k.similarity >= RELEVANT_TOP))
+    .filter(fresh);
   // A row of the entity map (module mapa) describes a system in general: it takes a free slot,
   // never a note's (measured 17/10/2026: ENT-EXT-SPONTE pushed out the Sponte sync procedure).
   const notes = fits.filter((k) => k.module !== MAP_MODULE).slice(0, 5);
   const knowledge = [...notes, ...fits.filter((k) => k.module === MAP_MODULE).slice(0, Math.min(1, 5 - notes.length))];
-  const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && !ownTaskIds.has(t.id) && /^resultado:/i.test(t.current_step || '')).slice(0, 2);
+  const tasks = (data?.tasks || []).filter((t) => t.hits >= minTaskHits && !ownTaskIds.has(t.id) && /^resultado:/i.test(t.current_step || '')
+    && isNew(`task|${t.id}`, t.updated_at)).slice(0, 2);
   // Rows close in meaning that no word reached (API semantic layer), after the word hits.
   const seen = new Set(knowledge.map((k) => `${k.project_id}|${k.id}`));
   const similar = (data?.semantic || [])
     .filter((k) => k.similarity >= SEMANTIC_IN_PROMPT && !seen.has(`${k.project_id}|${k.id}`) && !['rules', 'hygiene', MAP_MODULE].includes(k.module))
+    .filter(fresh)
     .slice(0, Math.min(2, Math.max(0, 5 - knowledge.length)));
   // A strong hit brings the start of its details, so the agent rarely needs a get turn.
   let excerpts = 0;
@@ -442,10 +456,20 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
   // and when; with vectors, the far in meaning stay out like word hits do.
   const commits = (data?.commits || [])
     .filter((c) => c.score >= Math.min(6, 3 * words.length) && (c.similarity == null || c.similarity >= COMMIT_RELEVANT))
+    .filter((c) => isNew(`commit|${c.sha}`))
     .slice(0, 2);
   // Unconfirmed work the request touches: whoever resumes it saves the real row.
-  const drafts = (data?.drafts || []).slice(0, 1);
-  if (!knowledge.length && !tasks.length && !similar.length && !commits.length && !drafts.length) return [];
+  const drafts = (data?.drafts || []).filter((d) => isNew(`${d.project_id}|${d.id}`, d.updated_at)).slice(0, 1);
+  const again = [...new Set(repeated)].slice(0, 5);
+  const againLine = again.length ? [`- já mostrados nesta sessão, sem mudança: ${again.join(', ')}`] : [];
+  if (shown) {
+    for (const k of [...knowledge, ...similar, ...drafts]) shown[`${k.project_id}|${k.id}`] = String(k.updated_at || '');
+    for (const t of tasks) shown[`task|${t.id}`] = String(t.updated_at || '');
+    for (const c of commits) shown[`commit|${c.sha}`] = '';
+  }
+  if (!knowledge.length && !tasks.length && !similar.length && !commits.length && !drafts.length) {
+    return again.length ? [`Da base: ${againLine[0].slice(2)}.`] : [];
+  }
   // Graph neighbours pass the same meaning bar as word hits.
   const related = (data?.related || []).filter((r) => r.similarity == null || r.similarity >= RELEVANT).slice(0, 2);
   const relatedOf = (k) => related.filter((r) => r.for === `${k.project_id}|${k.id}`)
@@ -458,6 +482,7 @@ export function hitsBlock(data, words, ownTaskIds = new Set()) {
     ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
     ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),
     ...drafts.map((d) => draftLine(d)),
+    ...againLine,
   ];
 }
 

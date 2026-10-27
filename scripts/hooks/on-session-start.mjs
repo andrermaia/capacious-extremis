@@ -103,6 +103,8 @@ if (hygiene.ok && hygiene.data?.knowledge_type === 'technical_debt') {
 
 state.project = project;
 state.sessionContext = { at: new Date().toISOString(), source: input.source || 'startup' };
+// A new, cleared or compacted context holds none of the notes shown before: the prompt hook may show them again.
+state.shown = {};
 saveState(input.session_id, state);
 
 const moduleLine = modules.length

@@ -649,6 +649,17 @@ test('a request naming a product searches it (with projetos and global) and the 
   assert.deepEqual(searches, ['louza,projetos,global', null].sort());
 });
 
+test('a note already shown in this context is named, not repeated, until the context is compacted', async () => {
+  const first = (await prompt('s47', 'corrija o boletim do louza')).hookSpecificOutput.additionalContext;
+  assert.match(first, /- louza\/LOUZA-BOLETIM-1 · Boletim do louza/);
+  const second = (await prompt('s47', 'e o boletim do louza no segundo trimestre?')).hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(second, /- louza\/LOUZA-BOLETIM-1 · /);
+  assert.match(second, /já mostrados nesta sessão, sem mudança: louza\/LOUZA-BOLETIM-1/);
+  await runHook(ws, api, 'on-session-start.mjs', { session_id: 's47', hook_event_name: 'SessionStart', source: 'compact' });
+  const third = (await prompt('s47', 'corrija o boletim do louza')).hookSpecificOutput.additionalContext;
+  assert.match(third, /- louza\/LOUZA-BOLETIM-1 · Boletim do louza/);
+});
+
 test('commits come from the products the request names; at the root with none named, no commits', async () => {
   await prompt('s42b', 'corrija o boletim do louza');
   const named = api.routes('search').at(-1).query;
