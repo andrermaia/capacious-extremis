@@ -72,7 +72,7 @@ try {
       inject(taskLine(loadState(input.session_id)));
     }
   } else if (event === 'Stop') {
-    run('on-stop.mjs', { hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: lastAnswer(steps()), transcript_path: null });
+    run('on-stop.mjs', { hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: lastAnswer(steps()), transcript_path: raw.transcriptPath || null });
     emit({});
   } else {
     emit({});

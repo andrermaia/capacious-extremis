@@ -28,7 +28,8 @@ const DRAFT_MIN_TOOLS = 4;
 const state = loadState(input.session_id);
 // Where the session lives, for the background consolidation (scripts/consolidate.mjs): it reads
 // the transcript once the session has gone quiet. Benchmark sessions stay out of it.
-if (input.transcript_path) Object.assign(state, { transcript: input.transcript_path, root, bench: process.env.CONTEXT_BENCH === '1' });
+// Codex may send no path: the consolidation then finds its rollout by the session id.
+Object.assign(state, { root, bench: process.env.CONTEXT_BENCH === '1', ...(input.transcript_path ? { transcript: input.transcript_path } : {}) });
 const { upserts, finished, toolUses, edited, upserted } = turnCliCalls(input);
 // What this turn saved is about the files it edited: link them, so the edit hook can warn
 // whoever edits those files next (any clone, any session, any agent).

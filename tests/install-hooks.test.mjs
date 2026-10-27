@@ -67,3 +67,19 @@ test('hooks go to the user settings with absolute paths; old project entries lea
   assert.deepEqual(again, user);
   fs.rmSync(base, { recursive: true, force: true });
 });
+
+test('Kimi: the hook tables go between markers, a reinstall replaces only them', async (t) => {
+  const { installKimi } = await import('../scripts/install-hooks.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kimihome-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, '.kimi-code', 'config.toml');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'default_model = "k3"\n\n[loop_control]\nmax_steps = 50\n');
+  installKimi({ home });
+  installKimi({ home });
+  const text = fs.readFileSync(file, 'utf8');
+  assert.match(text, /^default_model = "k3"\n\n\[loop_control\]\nmax_steps = 50\n/);
+  assert.equal(text.match(/\[\[hooks\]\]/g).length, 4);
+  assert.equal(text.match(/>>> managing-system-context/g).length, 1);
+  assert.match(text, /event = "PreToolUse"\nmatcher = "\^\(Edit\|Write\)\$"\ncommand = "node \\".*kimi-adapter\.mjs\\" PreToolUse"/);
+});

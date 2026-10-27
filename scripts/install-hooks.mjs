@@ -8,6 +8,7 @@
 // Usage: node install-hooks.mjs [--home <dir>] [--project-settings <file>] [--dry-run]
 //        node install-hooks.mjs --codex [--home <dir>] [--dry-run]   (Codex: ~/.codex/hooks.json)
 //        node install-hooks.mjs --agy [--home <dir>] [--dry-run]     (agy: ~/.gemini/config/hooks.json)
+//        node install-hooks.mjs --kimi [--home <dir>] [--dry-run]    (Kimi Code: ~/.kimi-code/config.toml)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -110,6 +111,36 @@ export function installAgy({ home = os.homedir(), dryRun = false } = {}) {
   return { status: 'ok', agy: file, events: Object.keys(config[AGY_ENTRY]) };
 }
 
+// Kimi Code CLI reads [[hooks]] tables from ~/.kimi-code/config.toml (event, matcher, command,
+// timeout); its own payload goes through kimi-adapter.mjs. Our tables sit between two marker
+// comments at the end of the file, so a reinstall replaces exactly them and nothing else.
+const KIMI_BEGIN = '# >>> managing-system-context hooks (install-hooks.mjs --kimi)';
+const KIMI_END = '# <<< managing-system-context hooks';
+export function kimiBlock() {
+  const table = (event, matcher = '') => [
+    '[[hooks]]',
+    `event = "${event}"`,
+    `matcher = ${JSON.stringify(matcher)}`,
+    `command = ${JSON.stringify(`node "${hooksDir}/kimi-adapter.mjs" ${event}`)}`,
+    'timeout = 60',
+  ].join('\n');
+  return [KIMI_BEGIN, table('SessionStart'), table('UserPromptSubmit'), table('PreToolUse', '^(Edit|Write)$'), table('Stop'), KIMI_END].join('\n\n');
+}
+export function installKimi({ home = os.homedir(), dryRun = false } = {}) {
+  const file = path.join(home, '.kimi-code', 'config.toml');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  const start = text.indexOf(KIMI_BEGIN);
+  const end = text.indexOf(KIMI_END);
+  if (start >= 0 && end > start) text = text.slice(0, start) + text.slice(end + KIMI_END.length);
+  text = `${text.replace(/\s+$/, '')}${text.trim() ? '\n\n' : ''}${kimiBlock()}\n`;
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  }
+  return { status: 'ok', kimi: file, events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'] };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const arg = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : null; };
@@ -117,6 +148,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const home = arg('home') || os.homedir();
     if (argv.includes('--codex')) {
       console.log(JSON.stringify(installCodex({ home, dryRun: argv.includes('--dry-run') }), null, 2));
+      process.exit(0);
+    }
+    if (argv.includes('--kimi')) {
+      console.log(JSON.stringify(installKimi({ home, dryRun: argv.includes('--dry-run') }), null, 2));
       process.exit(0);
     }
     if (argv.includes('--agy')) {

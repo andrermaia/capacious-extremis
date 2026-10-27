@@ -193,3 +193,58 @@ test('submit then collect, against fake Anthropic and context APIs', async (t) =
   assert.equal(fourth.code, 0, fourth.out);
   assert.equal(sent.length, 1, 'a consolidated session is not sent again');
 });
+
+test('Codex, agy and Kimi transcripts condense like Claude Code ones', () => {
+  const codex = [
+    line({ type: 'session_meta', payload: { id: 'x', cwd: 'C:/p' } }),
+    line({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>injetado</environment_context>' }] } }),
+    line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'Rode os testes' }] } } }),
+    line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'CommandExecution', command: ['powershell.exe', '-Command', 'npm test'], status: 'failed', exit_code: 1, aggregated_output: 'saída longa' } } }),
+    line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', changes: { 'C:/p/a.ts': { type: 'update', content: 'conteúdo' } }, status: 'completed' } } }),
+    line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Reasoning', summary_text: ['pensando'] } } }),
+    line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'Corrigi o teste.' }], phase: 'final_answer' } } }),
+  ];
+  const c = condense(codex);
+  assert.deepEqual(c.prompts, ['Rode os testes']);
+  assert.equal(c.toolUses, 2);
+  assert.match(c.text, /→ shell: npm test\n✗ erro: exit 1\n→ apply_patch: update C:\/p\/a\.ts\nAGENTE: Corrigi o teste\./);
+  assert.doesNotMatch(c.text, /injetado|saída longa|conteúdo|pensando/);
+
+  const agy = [
+    line({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\nconserte o build\n</USER_REQUEST>' }),
+    line({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', thinking: 'segredo', tool_calls: [{ name: 'run_command', args: { CommandLine: '"npm run build"' } }] }),
+    line({ step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: 'muita saída. Command exited with code 2.' }),
+    line({ step_index: 3, source: 'MODEL', type: 'GENERIC', status: 'ERROR', error: 'file does not exist' }),
+    line({ step_index: 4, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Build consertado.' }),
+  ];
+  const a = condense(agy);
+  assert.deepEqual(a.prompts, ['conserte o build']);
+  assert.match(a.text, /→ run_command: npm run build\n✗ erro: .*exited with code 2\.\n✗ erro: file does not exist\nAGENTE: Build consertado\./);
+  assert.doesNotMatch(a.text, /segredo/);
+
+  const kimi = [
+    line({ type: 'metadata', protocol_version: '1.5' }),
+    line({ type: 'turn.prompt', agentId: 'main', input: [{ type: 'text', text: 'Revise o PR' }], origin: { kind: 'user' } }),
+    line({ type: 'context.append_loop_event', agentId: 'main', event: { type: 'content.part', part: { type: 'think', think: 'raciocínio' } } }),
+    line({ type: 'context.append_loop_event', agentId: 'main', event: { type: 'tool.call', name: 'Bash', args: { command: 'git diff' } } }),
+    line({ type: 'context.append_loop_event', agentId: 'main', event: { type: 'tool.result', result: { output: 'diff enorme' } } }),
+    line({ type: 'context.append_loop_event', agentId: 'main', event: { type: 'tool.result', result: { output: 'permission denied', isError: true } } }),
+    line({ type: 'context.append_loop_event', agentId: 'main', event: { type: 'content.part', part: { type: 'text', text: 'PR revisado.' } } }),
+  ];
+  const k = condense(kimi);
+  assert.deepEqual(k.prompts, ['Revise o PR']);
+  assert.match(k.text, /USUÁRIO: Revise o PR\n→ Bash: git diff\n✗ erro: permission denied\nAGENTE: PR revisado\./);
+  assert.doesNotMatch(k.text, /raciocínio|diff enorme/);
+});
+
+test('Codex rollouts are found by the session id in the last 30 days', async (t) => {
+  const { codexRollouts } = await import('../scripts/consolidate.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codexhome-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const now = new Date(2026, 9, 26, 12).getTime();
+  const dir = path.join(home, '.codex', 'sessions', '2026', '10', '25');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = '01a17b0b-1234-7abc-8def-0123456789ab';
+  fs.writeFileSync(path.join(dir, `rollout-2026-10-25T22-48-45-${id}.jsonl`), '');
+  assert.equal(codexRollouts(home, now).get(id), path.join(dir, `rollout-2026-10-25T22-48-45-${id}.jsonl`));
+});

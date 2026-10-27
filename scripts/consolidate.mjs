@@ -104,8 +104,100 @@ function toolLine(b) {
   const cmd = i.command ? String(i.command) : '';
   // What the agent itself saved to the base stays whole: the model must not propose it again.
   if (/context-cli[\s\S]*\bupsert\b/.test(cmd)) return `→ ${b.name} (gravou na base): ${clip(cmd, 2500)}`;
-  const what = cmd || i.file_path || i.notebook_path || i.pattern || i.url || i.query || i.description || i.prompt || '';
+  const what = cmd || i.file_path || i.path || i.notebook_path || i.skill || i.pattern || i.url || i.query || i.description || i.prompt || '';
   return `→ ${b.name}: ${clip(what, 300)}`;
+}
+
+// One transcript record as condensed lines. Four formats, told apart record by record:
+//   Claude Code  {type: user|assistant, message: {content}}
+//   Codex        {type: event_msg, payload: {type: item_completed, item}} (the response_item copy of
+//                each event is skipped: it repeats the same thing with injected context)
+//   agy          {step_index, source, type: USER_INPUT|PLANNER_RESPONSE|GENERIC|ERROR_MESSAGE}
+//   Kimi Code    {type: turn.prompt | context.append_loop_event, agentId, ...} (agents/main/wire.jsonl)
+const prompt = (p) => ({ prompt: p, line: `USUÁRIO: ${p}` });
+const tool = (name, what) => ({ tool: true, line: `→ ${name}: ${clip(what, 300)}` });
+const error = (body) => ({ line: `✗ erro: ${clip(typeof body === 'string' ? body : JSON.stringify(body ?? ''), 400)}` });
+const agent = (text) => ({ line: `AGENTE: ${clip(text, 3000)}` });
+const texts = (content) => (Array.isArray(content) ? content.map((x) => x?.text || '').join('\n') : String(content || ''));
+const cmdLine = (b) => {
+  const cmd = b.cmd ?? b.command ?? b.CommandLine;
+  return Array.isArray(cmd) ? cmd.at(-1) : cmd;
+};
+
+export function recordPieces(rec) {
+  // Claude Code
+  if (rec.message && (rec.type === 'user' || rec.type === 'assistant')) {
+    const c = rec.message.content;
+    if (rec.type === 'user' && typeof c === 'string') {
+      if (rec.isMeta || /^\s*<(command-name|local-command)/.test(c)) return [];
+      if (/^\s*<task-notification>/.test(c)) return [{ line: 'AVISO: uma tarefa em segundo plano terminou.' }];
+      const p = clip(c, 4000);
+      return p ? [prompt(p)] : [];
+    }
+    return (Array.isArray(c) ? c : []).flatMap((b) => {
+      if (b?.type === 'text' && rec.type === 'assistant') return [agent(b.text)];
+      if (b?.type === 'tool_use') return [{ tool: true, line: toolLine(b) }];
+      if (b?.type === 'tool_result' && b.is_error) return [error(b.content)];
+      return [];
+    });
+  }
+  // Codex
+  if (rec.type === 'event_msg' && rec.payload?.type === 'item_completed') {
+    const it = rec.payload.item || {};
+    switch (it.type) {
+      case 'UserMessage': { const p = clip(texts(it.content), 4000); return p ? [prompt(p)] : []; }
+      case 'AgentMessage': { const t = texts(it.content); return t.trim() ? [agent(t)] : []; }
+      case 'CommandExecution': {
+        const cmd = String(cmdLine(it) || '');
+        const call = /context-cli[\s\S]*\bupsert\b/.test(cmd) ? { tool: true, line: `→ shell (gravou na base): ${clip(cmd, 2500)}` } : tool('shell', cmd);
+        return it.status === 'failed' || (it.exit_code != null && it.exit_code !== 0) ? [call, error(`exit ${it.exit_code}`)] : [call];
+      }
+      case 'FileChange': {
+        const files = Object.entries(it.changes || {}).map(([p, ch]) => `${ch?.type || 'edit'} ${p}`).join(', ');
+        return it.status && it.status !== 'completed' ? [tool('apply_patch', files), error(it.stderr || it.status)] : [tool('apply_patch', files)];
+      }
+      case 'McpToolCall': {
+        const call = tool(`${it.server}.${it.tool}`, JSON.stringify(it.arguments ?? ''));
+        return it.status === 'failed' || it.result?.isError ? [call, error(it.status)] : [call];
+      }
+      case 'Extension': return it.query ? [tool(it.kind || 'extension', it.query)] : [];
+      default: return [];
+    }
+  }
+  // agy
+  if (rec.step_index != null && rec.source) {
+    if (rec.type === 'USER_INPUT' && rec.source === 'USER_EXPLICIT') {
+      const text = String(rec.content || '');
+      const p = clip(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/.exec(text)?.[1] ?? text, 4000);
+      return p ? [prompt(p)] : [];
+    }
+    if (rec.type === 'PLANNER_RESPONSE') {
+      const out = rec.content ? [agent(rec.content)] : [];
+      for (const call of rec.tool_calls || []) {
+        const args = Object.fromEntries(Object.entries(call.args || {}).map(([k, v]) => { try { return [k, JSON.parse(v)]; } catch { return [k, v]; } }));
+        const what = String(args.CommandLine || args.Path || args.AbsolutePath || args.toolSummary || '');
+        out.push(/context-cli[\s\S]*\bupsert\b/.test(what) ? { tool: true, line: `→ ${call.name} (gravou na base): ${clip(what, 2500)}` } : tool(call.name, what));
+      }
+      return out;
+    }
+    if (rec.type === 'GENERIC' && rec.status === 'ERROR') return [error(rec.error || rec.content)];
+    if (rec.type === 'GENERIC' && /exited with code [1-9]/.test(String(rec.content || ''))) return [error(String(rec.content).slice(-400))];
+    if (rec.type === 'ERROR_MESSAGE') return [error(rec.error)];
+    return [];
+  }
+  // Kimi Code
+  if (rec.type === 'turn.prompt') {
+    if (rec.origin?.kind && rec.origin.kind !== 'user') return [];
+    const p = clip(texts(rec.input), 4000);
+    return p ? [prompt(p)] : [];
+  }
+  if (rec.type === 'context.append_loop_event') {
+    const e = rec.event || {};
+    if (e.type === 'content.part' && e.part?.type === 'text' && e.part.text?.trim()) return [agent(e.part.text)];
+    if (e.type === 'tool.call') return [{ tool: true, line: toolLine({ name: e.name, input: e.args }) }];
+    if (e.type === 'tool.result' && e.result?.isError) return [error(e.result.output)];
+  }
+  return [];
 }
 
 // The transcript lines [from, end) condensed into text, cut where the window fills up.
@@ -119,27 +211,14 @@ export function condense(lines, from = 0, maxChars = WINDOW_CHARS) {
   for (let i = from; i < lines.length; i++) {
     let rec;
     try { rec = JSON.parse(lines[i]); } catch { end = i + 1; continue; }
-    const out = [];
-    const c = rec.message?.content;
-    if (rec.type === 'user' && typeof c === 'string' && !rec.isMeta) {
-      if (/^\s*<task-notification>/.test(c)) out.push('AVISO: uma tarefa em segundo plano terminou.');
-      else if (!/^\s*<(command-name|local-command)/.test(c)) {
-        const p = clip(c, 4000);
-        if (p) { out.push(`USUÁRIO: ${p}`); prompts.push(p); }
-      }
-    } else if (Array.isArray(c)) {
-      for (const b of c) {
-        if (b?.type === 'text' && rec.type === 'assistant') out.push(`AGENTE: ${clip(b.text, 3000)}`);
-        else if (b?.type === 'tool_use') { out.push(toolLine(b)); toolUses++; }
-        else if (b?.type === 'tool_result' && b.is_error) {
-          const body = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
-          out.push(`✗ erro: ${clip(body, 400)}`);
-        }
-      }
-    }
-    const piece = out.join('\n');
+    const pieces = recordPieces(rec);
+    const piece = pieces.map((p) => p.line).join('\n');
     if (piece && chars + piece.length > maxChars && chars > 0) break;
     if (piece) { parts.push(piece); chars += piece.length + 1; }
+    for (const p of pieces) {
+      if (p.prompt) prompts.push(p.prompt);
+      if (p.tool) toolUses++;
+    }
     end = i + 1;
   }
   return { text: scrub(parts.join('\n')), end, toolUses, prompts };
@@ -319,8 +398,26 @@ async function saveDrafts(state) {
   return saved;
 }
 
+// Codex may send no transcript path to its hooks: its rollouts are found by the session id, the
+// UUID at the end of ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl (last 30 days).
+export function codexRollouts(home = os.homedir(), now = Date.now()) {
+  const index = new Map();
+  for (let d = 0; d < 30; d++) {
+    const day = new Date(now - d * 24 * 60 * 60 * 1000);
+    const dir = path.join(home, '.codex', 'sessions', String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0'));
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const n of names) {
+      const id = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(n)?.[1];
+      if (id && !index.has(id)) index.set(id, path.join(dir, n));
+    }
+  }
+  return index;
+}
+
 // Quiet sessions with enough new work since their watermark, as windows ready to submit.
 export async function pendingWindows(state, now = Date.now()) {
+  let rollouts = null;
   const busy = new Set((state.batches || []).flatMap((b) => b.windows.map((w) => w.session)));
   const out = [];
   let files = [];
@@ -329,14 +426,16 @@ export async function pendingWindows(state, now = Date.now()) {
     if (out.length >= MAX_REQUESTS) break;
     const session = f.replace(/\.json$/, '');
     const hook = loadJson(path.join(hooksDir(), f), null);
-    if (!hook?.transcript || !hook.project || !hook.root || hook.bench || busy.has(session)) continue;
+    if (!hook?.project || !hook.root || hook.bench || busy.has(session)) continue;
+    const transcript = hook.transcript || (rollouts ||= codexRollouts(os.homedir(), now)).get(session);
+    if (!transcript) continue;
     let stat;
-    try { stat = fs.statSync(hook.transcript); } catch { continue; }
+    try { stat = fs.statSync(transcript); } catch { continue; }
     if (now - stat.mtimeMs < IDLE_MS) continue;
     const s = (state.sessions[session] ||= { done: 0 });
     // Unchanged since the last look (sizes match): no need to read a transcript of many MB again.
     if (s.size === stat.size) continue;
-    const lines = fs.readFileSync(hook.transcript, 'utf8').split('\n').filter(Boolean);
+    const lines = fs.readFileSync(transcript, 'utf8').split('\n').filter(Boolean);
     if (s.done >= lines.length) { s.size = stat.size; continue; }
     const win = condense(lines, s.done);
     if (win.text.length < MIN_CHARS || win.toolUses < MIN_TOOLS) {
@@ -347,7 +446,8 @@ export async function pendingWindows(state, now = Date.now()) {
     const tasks = (hook.tasks || []).map((t) => t.id).filter(Boolean);
     out.push({
       session, project: hook.project, root: hook.root, from: s.done, to: win.end, text: win.text, prompts: win.prompts, tasks,
-      draftId: `DRAFT-H-${session.slice(0, 8).toUpperCase()}-${s.done}`,
+      // agy-<uuid> and kimi-<uuid> sessions: the prefix out, so the id keeps the UUID's start.
+      draftId: `DRAFT-H-${session.replace(/^(agy|kimi)-/, '').slice(0, 8).toUpperCase()}-${s.done}`,
       taskDrafts: tasks.map((id) => `DRAFT-${String(id).replace(/^TASK-/, '')}`),
     });
   }
