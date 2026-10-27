@@ -248,3 +248,18 @@ test('Codex rollouts are found by the session id in the last 30 days', async (t)
   fs.writeFileSync(path.join(dir, `rollout-2026-10-25T22-48-45-${id}.jsonl`), '');
   assert.equal(codexRollouts(home, now).get(id), path.join(dir, `rollout-2026-10-25T22-48-45-${id}.jsonl`));
 });
+
+test('a proposed note already in the base is dropped and named; with nothing new nor open, no draft', async () => {
+  const { overlap } = await import('../scripts/consolidate.mjs');
+  const win = { session: 'abcdef12', project: 'projetos', from: 0, to: 9, tasks: [], draftId: 'DRAFT-H-ABCDEF12-0', taskDrafts: [] };
+  const note = (summary) => ({ project: 'projetos', module: 'agent-context', feature: 'hooks', type: 'current_behavior', phase: 'implemented', summary, keywords: 'k', details: '', supersedes: '' });
+  const saved = { project_id: 'projetos', id: 'AGENTCTX-BEH-SELF-UPDATE', summary: 'Since 27/10/2026 self-update.mjs fast-forwards the skill clone to origin/main hourly from session start and re-runs install-hooks' };
+  assert.ok(overlap(saved.summary, 'Since 27/10/2026 (eaeba1e) self-update.mjs fast-forwards the skill clone to origin/main hourly from session start') >= 0.4);
+  const reply = { worth_saving: true, title: 't', handoff: { goal: 'g', state: 's', failed: [], verified: [], open: [], next: '' },
+    notes: [note('Since 27/10/2026 (eaeba1e) self-update.mjs fast-forwards the skill clone to origin/main hourly from session start'), note('Kimi Code drops SessionStart output, so the adapter sends the session context with the first prompt')] };
+  const d = draftFrom(reply, win, [saved]);
+  assert.match(d.details, /Já na base \(não propostas de novo\): projetos\/AGENTCTX-BEH-SELF-UPDATE/);
+  assert.equal((d.details.match(/^--project /gm) || []).length, 1);
+  assert.equal(draftFrom({ ...reply, notes: [reply.notes[0]] }, win, [saved]), null);
+  assert.ok(draftFrom({ ...reply, notes: [reply.notes[0]], handoff: { ...reply.handoff, open: ['deploy'] } }, win, [saved]), 'open work keeps the handoff');
+});

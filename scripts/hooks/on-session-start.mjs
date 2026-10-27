@@ -105,7 +105,8 @@ const groups = [
   { rank: 2, title: `Novidades da base (${digest.data?.days} dias · ${counts}):`, items: hasDigest ? (digest.data.changed || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 120)}`) : [] },
   { rank: 5, title: `Rascunhos a confirmar (${digest.data?.drafts_total}; trabalho que terminou sem upsert):`,
     items: hasDigest ? (digest.data.drafts || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 110)}`) : [],
-    footer: 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela).' },
+    footer: 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela). '
+      + `Rascunho (Haiku) com notas propostas: ${CLI} confirm-draft <ID> --project <p> grava todas numa chamada (--ids A,B · --skip 2 · --discard descarta).` },
   { rank: 0, title: 'Em andamento em outras sessões (48 h):', items: openNow.map(taskLine) },
   { rank: 4, title: 'Bloqueadas (14 dias):', items: stuck.map(taskLine) },
   { rank: 1, title: 'Resultados recentes:', items: results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`) },

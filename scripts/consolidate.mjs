@@ -292,14 +292,36 @@ export function buildRequest(customId, { project, text, neighbours }) {
   };
 }
 
-// The draft a successful result becomes; null when the model found nothing worth saving.
-export function draftFrom(reply, win) {
+// Word overlap of two summaries (Jaccard over words of 4+ letters, accents and case ignored).
+const wordSet = (s) => new Set((String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').match(/[a-z0-9]{4,}/g) || []));
+export function overlap(a, b) {
+  const x = wordSet(a);
+  const y = wordSet(b);
+  if (!x.size || !y.size) return 0;
+  let inter = 0;
+  for (const w of x) if (y.has(w)) inter++;
+  return inter / (x.size + y.size - inter);
+}
+// A proposal this close to a note already in the base repeats it (measured 27/10/2026: a session
+// whose agent saved its notes at the end, past the window, got all five proposed again).
+export const KNOWN_OVERLAP = 0.4;
+
+// The draft a successful result becomes; null when the model found nothing worth saving, or when
+// every note it proposes is already in the base (existing: rows found for them) and nothing is open.
+export function draftFrom(reply, win, existing = []) {
   if (!reply || (!reply.worth_saving && !(reply.notes || []).length)) return null;
   const h = reply.handoff || {};
   const list = (title, xs) => (xs?.length ? `${title}:\n${xs.map((x) => `- ${scrub(x)}`).join('\n')}` : '');
   const known = new Set(PROJECTS.split(/,\s*/));
   const draftKey = `${win.project}/${win.draftId}`;
-  const notes = (reply.notes || []).slice(0, 5).map((n) => {
+  const already = [];
+  const fresh = (reply.notes || []).slice(0, 5).filter((n) => {
+    const twin = existing.find((k) => overlap(k.summary, n.summary) >= KNOWN_OVERLAP);
+    if (twin) already.push(`${twin.project_id}/${twin.id}`);
+    return !twin;
+  });
+  if (!fresh.length && !(h.open || []).length && (reply.notes || []).length) return null;
+  const notes = fresh.map((n) => {
     const summary = scrub(n.summary).replace(/\s+/g, ' ').trim();
     return {
       project: known.has(n.project) ? n.project : win.project,
@@ -321,13 +343,14 @@ export function draftFrom(reply, win) {
   const proposals = notes.length
     ? `\n\nNotas propostas (confira, dê um ID e grave com upsert; o supersedes já inclui este rascunho):\n${notes.map((n) => `--project ${n.project} ${JSON.stringify(n.row)}`).join('\n')}`
     : '';
+  const repeats = already.length ? `\n\nJá na base (não propostas de novo): ${[...new Set(already)].join(', ')}` : '';
   const title = scrub(reply.title || h.goal || 'sessão').replace(/\s+/g, ' ').trim();
   return {
     id: win.draftId, module: 'drafts', feature: 'consolidacao', knowledge_type: 'current_behavior', phase: 'queued',
     summary: `Rascunho (Haiku): ${title}`.slice(0, 250),
     keywords: [...new Set(notes.flatMap((n) => String(n.row.keywords).split(/,\s*/)).filter(Boolean))].slice(0, 10).join(', ') || null,
     no_similar: true,
-    details: `${handoff}${proposals}\n\nSessão ${win.session} · linhas ${win.from}–${win.to} · tarefas ${(win.tasks || []).join(', ') || '—'}`,
+    details: `${handoff}${proposals}${repeats}\n\nSessão ${win.session} · linhas ${win.from}–${win.to} · tarefas ${(win.tasks || []).join(', ') || '—'}`,
     // The Stop hook's thin draft of the same task is replaced by this one.
     ...(win.taskDrafts?.length ? { supersedes: win.taskDrafts.join(',') } : {}),
   };
@@ -349,6 +372,18 @@ async function anthropic(key, method, endpoint, body) {
   });
   if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res;
+}
+
+// The base's rows nearest to each proposed note (its project, by the summary's words), for
+// draftFrom to drop what is already saved. The base down: none, and every proposal stays.
+async function existingFor(reply, win) {
+  const known = new Set(PROJECTS.split(/,\s*/));
+  const found = await Promise.all((reply.notes || []).slice(0, 5).map((n) => {
+    const words = searchWords(n.summary).slice(0, 8);
+    const project = known.has(n.project) ? n.project : win.project;
+    return words.length ? callApi(win.root, ['search', ...words, '--project', project, '--limit', '5'], { timeoutMs: 10_000 }) : null;
+  }));
+  return found.flatMap((r) => (r?.ok ? r.data?.knowledge || [] : []));
 }
 
 // Ended batches: each succeeded result becomes a draft and moves its session's watermark on;
@@ -374,7 +409,7 @@ export async function collect(key, state) {
         log(`janela ${win.customId}: ${r?.type || 'sem resultado'}${msg ? ` (${msg.stop_reason})` : ''}`);
         continue;
       }
-      const draft = draftFrom(reply, win);
+      const draft = draftFrom(reply, win, await existingFor(reply, win));
       // The base down keeps the draft here, to save on the next run: the window is not paid twice.
       if (draft) state.unsaved = [...(state.unsaved || []), { project: win.project, root: win.root, draft }];
       s.done = win.to;

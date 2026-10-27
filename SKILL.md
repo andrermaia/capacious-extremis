@@ -113,6 +113,8 @@ From the billion-context / ai-memory study (AGENTCTX-FUT-BC-AIMEMORY-TOP10):
 - **Snippets**: search excerpts open at the sentence holding the first search term (context-api `excerpt`); `get <ID> --grep <words>` prints only the parts of the details that hold them.
 - **Tool output**: in Claude Code's bypassPermissions mode, `on-bash.mjs` rewrites a whole, unfiltered test/build command (`npm test`, `node --test`, `cargo test`, `pytest`...) so its output goes to a log and the model gets the failures and the last lines (`quiet-run.mjs`), exit code kept. `CONTEXT_QUIET_RUN=0` turns it off.
 - **Hygiene**: `--fix` deprioritizes drafts unconfirmed for 21+ days (reversible); the report lists notes whose linked file changed after them.
+- **Metrics**: `scripts/metrics.mjs [--days N] [--json]` reads the Claude Code transcripts (no model, no network): CLI-only turns by command, characters the hooks injected per session, tokens and the share of input read from cache, outputs the Bash hook summarized. The weekly hygiene report carries the last 7 days.
+- **Confirming drafts**: `confirm-draft <DRAFT-ID> --project <p>` saves the notes a Haiku draft proposes in one call, each superseding the draft (`--ids A,B`, `--skip 2`, `--dry-run`, `--discard`). The consolidation drops proposals that overlap a note already in the base (word Jaccard >= 0.4, measured 27/10: five repeats at 0.48-0.79) and writes no draft when nothing new nor open is left.
 
 ## Kimi Code and Self-Update (since 27/10/2026)
 

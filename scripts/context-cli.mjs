@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configuredApiUrl, configuredEnv, MISSING_API_URL } from './api-config.mjs';
-import { printRead } from './cli-format.mjs';
+import { printRead, draftProposals } from './cli-format.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,7 +33,7 @@ function isApiUnavailable(err) {
 
 // Flags that take no value. Without this list `--no-api query` would consume
 // "query" as the flag's value and leave the CLI with no command at all.
-const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help', 'all', 'json']);
+const BOOLEAN_FLAGS = new Set(['no-api', 'import', 'help', 'all', 'json', 'discard', 'dry-run']);
 
 // Same matching as the API's /search: lower case, no accents, one point per word found,
 // ranked by where it was found (summary or id > module or feature > details).
@@ -369,6 +369,43 @@ async function main() {
         if (!id) throw new CliError('Missing record ID for "get" command.');
         const data = await requestApi(apiUrl, `knowledge/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, {}, apiToken);
         printRead('get', data, options);
+        return;
+      }
+
+      // confirm-draft <DRAFT-ID>: saves the notes a consolidation draft proposes (lines
+      // "--project <p> {row}" in its details) in one call, each with "supersedes" naming the draft,
+      // so the draft retires. --ids A,B names them (else an id from module and feature); --skip 2,3
+      // leaves proposals out; --discard retires the draft without saving anything.
+      case 'confirm-draft': {
+        const draftId = options.args[1] || options.id;
+        if (!draftId) throw new CliError('Missing draft ID for "confirm-draft".');
+        const draft = await requestApi(apiUrl, `knowledge/${encodeURIComponent(draftId)}?project=${encodeURIComponent(projectId)}`, {}, apiToken);
+        if (draft.module !== 'drafts') throw new CliError(`${draftId} is not a draft (module ${draft.module}).`);
+        if (options.discard) {
+          const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(projectId)}`, {
+            method: 'POST',
+            body: JSON.stringify({ id: draft.id, module: 'drafts', feature: draft.feature, knowledge_type: draft.knowledge_type, summary: draft.summary, details: draft.details, keywords: draft.keywords, phase: 'deprioritized', no_similar: true }),
+          }, apiToken);
+          console.log(JSON.stringify({ status: 'ok', discarded: draft.id, action: data.action }, null, 2));
+          return;
+        }
+        const proposals = draftProposals(draft.details, { ids: options.ids, skip: options.skip });
+        if (!proposals.length) throw new CliError(`${draftId} proposes no notes: write the real row with upsert and "supersedes":"${projectId}/${draftId}", or --discard it.`);
+        if (options['dry-run']) {
+          console.log(JSON.stringify({ status: 'dry-run', draft: draftId, proposals }, null, 2));
+          return;
+        }
+        const results = [];
+        for (const { project, row } of proposals) {
+          checkUpsert(row);
+          const data = await requestApi(apiUrl, `upsert?project=${encodeURIComponent(project)}`, {
+            method: 'POST',
+            body: JSON.stringify({ id: row.id, project_id: project, module: row.module, feature: row.feature, knowledge_type: row.type, phase: row.phase,
+              summary: row.summary, details: row.details || null, keywords: normalizeKeywords(row.keywords), supersedes: row.supersedes }),
+          }, apiToken);
+          results.push({ project, id: row.id, action: data.action, ...(data.superseded ? { superseded: data.superseded } : {}), ...(data.similar ? { similar: data.similar } : {}) });
+        }
+        console.log(JSON.stringify({ status: 'ok', draft: draftId, count: results.length, results, ...upsertExtras(results) }, null, 2));
         return;
       }
 

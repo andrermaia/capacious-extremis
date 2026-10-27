@@ -121,3 +121,26 @@ export function printRead(command, data, { json = false, grep = null } = {}) {
               : null;
   console.log(text ?? JSON.stringify(clean, null, 2));
 }
+
+// The notes a consolidation draft proposes: lines "--project <p> {row}" of its details, in order.
+// ids (comma list) names them in order; a missing one gets MODULE-FEATURE-<day><n>. skip lists
+// 1-based positions to leave out.
+export function draftProposals(details, { ids = '', skip = '', today = new Date() } = {}) {
+  const names = String(ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const left = new Set(String(skip || '').split(',').map((s) => Number(s.trim())).filter(Boolean));
+  const day = today.toISOString().slice(2, 10).replace(/-/g, '');
+  const out = [];
+  let n = 0;
+  for (const line of String(details || '').split('\n')) {
+    const m = /^--project ([\w-]+) (\{.*\})\s*$/.exec(line.trim());
+    if (!m) continue;
+    n++;
+    if (left.has(n)) continue;
+    let row;
+    try { row = JSON.parse(m[2]); } catch { continue; }
+    const slug = `${row.module || 'note'}-${row.feature || 'general'}`.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+    row.id = names[out.length] || (row.id && row.id !== '<ID>' ? row.id : `${slug}-${day}${n}`);
+    out.push({ project: m[1], row });
+  }
+  return out;
+}

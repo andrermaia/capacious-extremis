@@ -233,3 +233,20 @@ test('get --grep keeps only the parts of the details that hold the words (accent
   assert.match(text, /Detalhes \(1 de 3 trechos com certificado; sem --grep para tudo\):\nSegunda sobre o Sicoob/);
   assert.doesNotMatch(text, /Terceira/);
 });
+
+test('confirm-draft reads the proposed notes of a draft, names them and honours --skip', async () => {
+  const { draftProposals } = await import('../scripts/cli-format.mjs');
+  const details = [
+    'Objetivo: x',
+    'Notas propostas (confira, dê um ID e grave com upsert; o supersedes já inclui este rascunho):',
+    '--project louza {"id":"<ID>","module":"boletim","feature":"media","type":"current_behavior","phase":"implemented","summary":"Weighted mean","keywords":"boletim, média","supersedes":"louza/DRAFT-H-AB-0"}',
+    '--project projetos {"id":"<ID>","module":"agent-context","feature":"hooks","type":"technical_debt","phase":"queued","summary":"Debt","keywords":"hook","supersedes":"OLD-1,louza/DRAFT-H-AB-0"}',
+    'Sessão s · linhas 0–7',
+  ].join('\n');
+  const all = draftProposals(details, { today: new Date('2026-10-27T00:00:00Z') });
+  assert.deepEqual(all.map((p) => [p.project, p.row.id]), [['louza', 'BOLETIM-MEDIA-2610271'], ['projetos', 'AGENT-CONTEXT-HOOKS-2610272']]);
+  assert.equal(all[1].row.supersedes, 'OLD-1,louza/DRAFT-H-AB-0');
+  const named = draftProposals(details, { ids: 'LOUZA-BOLETIM-MEDIA', skip: '2' });
+  assert.deepEqual(named.map((p) => p.row.id), ['LOUZA-BOLETIM-MEDIA']);
+  assert.deepEqual(draftProposals('Rascunho: sem notas'), []);
+});
