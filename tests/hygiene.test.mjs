@@ -5,6 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { analyse, notEnglish, duplicates, memoryFacts, render, summaryLine, total } from '../scripts/hygiene.mjs';
 
+test('notes whose linked file changed after them are listed for a re-check; drafts and retired rows are not', () => {
+  const paths = [
+    { project_id: 'louza', id: 'BOLETIM-1', module: 'louza', phase: 'implemented', summary: 'Boletim uses weighted mean', stale: { repo: 'louza', sha: 'abc1234', date: '2026-10-20' } },
+    { project_id: 'louza', id: 'DRAFT-X', module: 'drafts', draft: true, phase: 'queued', summary: 'Rascunho', stale: { repo: 'louza', sha: 'abc1234', date: '2026-10-20' } },
+    { project_id: 'louza', id: 'OLD-1', module: 'louza', phase: 'deprioritized', summary: 'Old', stale: { repo: 'louza', sha: 'abc1234', date: '2026-10-20' } },
+    { project_id: 'louza', id: 'FRESH-1', module: 'louza', phase: 'implemented', summary: 'Fresh' },
+  ];
+  const f = analyse({ knowledge: [], tasks: [], paths });
+  assert.deepEqual(f.changedFiles.map((k) => k.id), ['BOLETIM-1']);
+  assert.match(render(f), /## Notas cujo arquivo mudou depois delas[^\n]*\(1\)\n- louza\/BOLETIM-1 · louza@abc1234 \(2026-10-20\)/);
+  assert.match(summaryLine(f), /1 notes behind their files\.$/);
+  assert.ok(summaryLine(f).length <= 250);
+});
+
 const NOW = Date.parse('2026-10-15T12:00:00Z');
 const ago = (days) => new Date(NOW - days * 86400000).toISOString();
 

@@ -7,7 +7,9 @@
 //   - project facts written to a Claude Code memory folder (they belong in the base)
 //   - rules files that differ from the base (hand-edited or stale; sync-rules fixes them)
 //   - knowledge without Portuguese keywords (the prompt search finds it worse)
-//   - drafts the Stop hook left (work that ended without an upsert) still to confirm
+//   - drafts the Stop hook left (work that ended without an upsert) still to confirm; --fix moves
+//     those older than 21 days to deprioritized (reversible: the row stays, out of search)
+//   - notes whose linked file changed after them (re-check them; nothing is changed by itself)
 // --save stores the report in the base (project global, module hygiene, id HYGIENE-REPORT),
 // which the session-start hook shows while it has findings.
 // Usage: node hygiene.mjs [--fix] [--save] [--quiet]
@@ -20,7 +22,7 @@ import { configuredApiUrl, MISSING_API_URL } from './api-config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
-export const LIMITS = { staleKnowledgeDays: 30, staleTaskDays: 7, duplicateJaccard: 0.6 };
+export const LIMITS = { staleKnowledgeDays: 30, staleTaskDays: 7, duplicateJaccard: 0.6, oldDraftDays: 21 };
 
 const PT_WORDS = new Set(['não', 'nao', 'para', 'uma', 'aos', 'nas', 'nos', 'seu', 'sua', 'ser', 'faz', 'tudo', 'que', 'dos', 'das', 'está', 'são', 'pelo', 'pela', 'também', 'quando', 'sem', 'ainda', 'foi', 'ficou', 'tem', 'isso', 'mas', 'depois', 'antes', 'agora', 'como', 'porque', 'entre', 'onde']);
 const STOP = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'that', 'this', 'are', 'was', 'has', 'not', 'but', 'its', 'via', 'per', 'when', 'only', 'now', 'all', 'any', 'one', 'two', 'out']);
@@ -78,7 +80,7 @@ export function memoryFacts(home = os.homedir()) {
   return found;
 }
 
-export function analyse({ knowledge: all, tasks, now = Date.now(), memory = [], rulesDrift = [] }) {
+export function analyse({ knowledge: all, tasks, now = Date.now(), memory = [], rulesDrift = [], paths = [] }) {
   const age = (r) => (now - Date.parse(r.updated_at)) / DAY;
   // Drafts are raw notes in Portuguese waiting for an agent: listed apart, never checked as rows.
   const drafts = all.filter((k) => k.module === 'drafts' && k.phase !== 'deprioritized');
@@ -95,6 +97,9 @@ export function analyse({ knowledge: all, tasks, now = Date.now(), memory = [], 
     missingKeywords: knowledge.filter((k) => k.phase !== 'deprioritized' && !k.keywords && !SCANNER_ROW.test(k.summary || ''))
       .map((k) => ({ id: k.id, project: k.project_id })),
     drafts: drafts.map((k) => ({ id: k.id, project: k.project_id, days: Math.floor(age(k)), summary: k.summary })),
+    // A file linked to the note changed after it (GET /paths flags it): the note may describe old code.
+    changedFiles: paths.filter((r) => r.stale && !r.draft && r.module !== 'drafts' && r.phase !== 'deprioritized')
+      .map((r) => ({ id: r.id, project: r.project_id, stale: r.stale, summary: r.summary })),
   };
 }
 
@@ -114,6 +119,7 @@ export function render(findings, { fixed = 0, date = new Date() } = {}) {
     ...sec('Arquivos de regras diferentes da base (rode sync-rules)', findings.rulesDrift, (f) => `- ${f}`),
     ...sec('Sem palavras-chave em português (context-cli keywords --file -)', findings.missingKeywords, (k) => `- ${k.project}/${k.id}`, 20),
     ...sec('Rascunhos a confirmar (grave a linha real com "supersedes":"<ID>" ou descarte com phase deprioritized)', findings.drafts || [], (k) => `- ${k.project}/${k.id} · ${k.days} d · ${cut(k.summary, 110)}`, 20),
+    ...sec('Notas cujo arquivo mudou depois delas (confira e atualize, ou deixe se ainda vale)', findings.changedFiles || [], (k) => `- ${k.project}/${k.id} · ${k.stale.repo}@${k.stale.sha} (${k.stale.date}) · ${cut(k.summary, 100)}`, 20),
   ];
   return lines.join('\n').trim();
 }
@@ -121,7 +127,7 @@ export function render(findings, { fixed = 0, date = new Date() } = {}) {
 export function summaryLine(findings, { fixed = 0, date = new Date() } = {}) {
   const d = date.toISOString().slice(0, 10).split('-').reverse().join('/');
   const n = (k) => findings[k].length;
-  return `Hygiene ${d}: ${n('staleKnowledge')} stale in_progress, ${n('staleTasks')} stale tasks (${fixed} closed), ${n('duplicates')} duplicate pairs, ${n('notEnglish')} non-English, ${n('memoryFacts')} memory facts, ${n('rulesDrift')} rules drift, ${n('missingKeywords')} without keywords, ${(findings.drafts || []).length} drafts.`;
+  return `Hygiene ${d}: ${n('staleKnowledge')} stale in_progress, ${n('staleTasks')} stale tasks (${fixed} closed), ${n('duplicates')} duplicate pairs, ${n('notEnglish')} non-English, ${n('memoryFacts')} memory facts, ${n('rulesDrift')} rules drift, ${n('missingKeywords')} without keywords, ${(findings.drafts || []).length} drafts, ${(findings.changedFiles || []).length} notes behind their files.`;
 }
 
 export const total = (f) => Object.values(f).reduce((a, l) => a + l.length, 0);
@@ -156,9 +162,11 @@ async function main() {
   const drift = spawnSync(process.execPath, [path.join(here, 'sync-rules.mjs'), '--dry-run'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, CONTEXT_API_TOKEN: token() } });
   let rulesDrift = [];
   try { rulesDrift = JSON.parse(drift.stdout).written || []; } catch {}
-  const findings = analyse({ knowledge: data.system_knowledge, tasks: data.agent_tasks, memory: memoryFacts(), rulesDrift });
+  const paths = await api('paths').catch(() => []);
+  const findings = analyse({ knowledge: data.system_knowledge, tasks: data.agent_tasks, memory: memoryFacts(), rulesDrift, paths });
 
   let fixed = 0;
+  let retired = 0;
   if (fix) {
     for (const t of findings.staleTasks) {
       const project = `project=${encodeURIComponent(t.project)}`;
@@ -166,6 +174,16 @@ async function main() {
         await api(`tasks/step?${project}`, { method: 'POST', body: JSON.stringify({ id: t.id, step: `faxina: aberta sem movimento havia ${t.days} dias` }) });
         await api(`tasks/finish?${project}`, { method: 'POST', body: JSON.stringify({ id: t.id, status: 'BLOCKED' }) });
         fixed++;
+      } catch {}
+    }
+    // Drafts nobody confirmed in three weeks leave the session start and the search; the row stays.
+    const rows = new Map(data.system_knowledge.map((k) => [`${k.project_id}|${k.id}`, k]));
+    for (const d of findings.drafts.filter((x) => x.days >= LIMITS.oldDraftDays)) {
+      const row = rows.get(`${d.project}|${d.id}`);
+      try {
+        const { id, module, feature, knowledge_type, summary, details, keywords } = row;
+        await api(`upsert?project=${encodeURIComponent(d.project)}`, { method: 'POST', body: JSON.stringify({ id, module, feature, knowledge_type, summary, details, keywords, phase: 'deprioritized', no_similar: true }) });
+        retired++;
       } catch {}
     }
   }
@@ -179,7 +197,7 @@ async function main() {
         knowledge_type: total(findings) ? 'technical_debt' : 'current_behavior', phase: total(findings) ? 'queued' : 'implemented', summary, details: report }),
     });
   }
-  if (!argv.includes('--quiet')) console.log(`${summary}\n\n${report}`);
+  if (!argv.includes('--quiet')) console.log(`${summary}${retired ? ` (${retired} old drafts deprioritized)` : ''}\n\n${report}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
