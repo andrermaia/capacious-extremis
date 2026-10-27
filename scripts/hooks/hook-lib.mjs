@@ -303,6 +303,8 @@ export function protocolText(project) {
     `- Contexto: o hook de cada pedido já busca na base pelas palavras do pedido e mostra os itens achados. Para ir além: ${CLI} query ${p} --module <módulo> · ${CLI} search <palavras em inglês> ${p} (--all = todos os projetos) · ${CLI} get <ID> ${p}`,
     `- Mapa de sistemas e dependências (ids ENT-*): ${CLI} impact <ENT-ID> ${p} = o que é afetado se ele mudar ou cair · neighbours <ID> = todas as ligações.`,
     '- Tarefa: o hook abre e fecha sozinho; não rode task-start nem task-finish.',
+    // A short doctrine pays for itself: the billion-context study measured re-reads falling 62% from the doctrine text alone.
+    '- Contexto enxuto: não releia o que já leu nem repita a busca que o hook já fez (releia só se o arquivo mudou ou o contexto foi compactado); leia arquivos grandes por trechos (offset/limit) e procure com grep antes de abrir; varredura ampla vai para um subagente, que devolve só a conclusão; saída longa de teste ou build, filtre (tail, grep das falhas) em vez de trazê-la inteira.',
     `- Encerramento: se surgiu decisão, modelo ou débito, grave antes da resposta final, numa chamada só: ${CLI} upsert ${p} --file - <<'EOF'`,
     '  [{"id":"<ID>","module":"<m>","feature":"<f>","type":"architecture_decision|system_model|current_behavior|future_revision|technical_debt","phase":"implemented|in_progress|queued|deprioritized","progress":"XX/YY (só em in_progress)","summary":"<inglês, até 250 caracteres>","keywords":"<6 a 10 palavras-chave em português, separadas por vírgula>","details":"<opcional>","supersedes":"<ID antigo que este substitui, opcional>","links":"<opcional: depends_on:ID, contradicts:ID, refers_to:ID>"}]',
     '  EOF',
