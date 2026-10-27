@@ -462,28 +462,54 @@ export function hitsBlock(data, words, ownTaskIds = new Set(), shown = null) {
   const drafts = (data?.drafts || []).filter((d) => isNew(`${d.project_id}|${d.id}`, d.updated_at)).slice(0, 1);
   const again = [...new Set(repeated)].slice(0, 5);
   const againLine = again.length ? [`- já mostrados nesta sessão, sem mudança: ${again.join(', ')}`] : [];
-  if (shown) {
-    for (const k of [...knowledge, ...similar, ...drafts]) shown[`${k.project_id}|${k.id}`] = String(k.updated_at || '');
-    for (const t of tasks) shown[`task|${t.id}`] = String(t.updated_at || '');
-    for (const c of commits) shown[`commit|${c.sha}`] = '';
-  }
-  if (!knowledge.length && !tasks.length && !similar.length && !commits.length && !drafts.length) {
-    return again.length ? [`Da base: ${againLine[0].slice(2)}.`] : [];
-  }
   // Graph neighbours pass the same meaning bar as word hits.
   const related = (data?.related || []).filter((r) => r.similarity == null || r.similarity >= RELEVANT).slice(0, 2);
   const relatedOf = (k) => related.filter((r) => r.for === `${k.project_id}|${k.id}`)
     .map((r) => `  ↔ ${EDGE_LABEL[`${r.kind}|${r.dir}`] || r.kind} ${r.project_id}/${r.id} · ${cut(r.summary, 110)}`);
+  // Each hit is a unit (its line, excerpt and neighbours), in order of value; units go in whole
+  // while they fit the prompt budget, and what does not fit is named, not shown.
+  const units = [
+    ...knowledge.map((k, i) => ({ key: `${k.project_id}|${k.id}`, version: k.updated_at, name: `${k.project_id}/${k.id}`,
+      lines: [...withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}${staleNote(k.stale)}`, k,
+        i < 2 && strength(k) >= STRONG && (k.similarity == null || k.similarity >= EXCERPT_MIN)), ...relatedOf(k)] })),
+    ...similar.map((k) => ({ key: `${k.project_id}|${k.id}`, version: k.updated_at, name: `${k.project_id}/${k.id}`,
+      lines: withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG) })),
+    ...tasks.map((t) => ({ key: `task|${t.id}`, version: t.updated_at, name: t.id,
+      lines: [`- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`] })),
+    ...commits.map((c) => ({ key: `commit|${c.sha}`, version: '', name: `${c.repo}@${String(c.sha).slice(0, 7)}`,
+      lines: [`- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`] })),
+    ...drafts.map((d) => ({ key: `${d.project_id}|${d.id}`, version: d.updated_at, name: `${d.project_id}/${d.id}`, lines: [draftLine(d)] })),
+  ];
+  const { kept, left } = packUnits(units, PROMPT_BUDGET);
+  if (shown) for (const u of kept) shown[u.key] = String(u.version || '');
+  if (!kept.length) return again.length ? [`Da base: ${againLine[0].slice(2)}.`] : [];
   return [
     `Da base (busca automática pelo pedido; detalhes: ${CLI} get <ID> --project <projeto>):`,
-    ...knowledge.flatMap((k, i) => [...withExcerpt(`- ${k.project_id}/${k.id} · ${cut(k.summary, 170)}${staleNote(k.stale)}`, k,
-      i < 2 && strength(k) >= STRONG && (k.similarity == null || k.similarity >= EXCERPT_MIN)), ...relatedOf(k)]),
-    ...similar.flatMap((k) => withExcerpt(`- ≈ ${k.project_id}/${k.id} · ${cut(k.summary, 170)}`, k, k.similarity >= SEMANTIC_STRONG)),
-    ...tasks.map((t) => `- tarefa ${t.project_id}/${t.id} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`),
-    ...commits.map((c) => `- commit ${c.repo}@${String(c.sha).slice(0, 7)} · ${c.date} · ${cut(c.subject, 120)}`),
-    ...drafts.map((d) => draftLine(d)),
+    ...kept.flatMap((u) => u.lines),
+    ...(left.length ? [`- fora do limite de contexto (use get): ${left.map((u) => u.name).join(', ')}`] : []),
     ...againLine,
   ];
+}
+
+// Context budgets in characters (~2.1 per token in this mix of Portuguese, English and code):
+// what the prompt hook adds per request, and the session start's variable part (the protocol
+// comes on top of it).
+export const PROMPT_BUDGET = 2200;
+export const SESSION_BUDGET = 3200;
+
+// Units ({ lines: [...] }) in order, each whole or not at all, while the total fits the budget.
+// The first unit always goes in (a single long note is still the best answer).
+export function packUnits(units, budget) {
+  const kept = [];
+  const left = [];
+  let used = 0;
+  for (const u of units) {
+    const size = u.lines.join('\n').length + 1;
+    if (kept.length && used + size > budget) { left.push(u); continue; }
+    kept.push(u);
+    used += size;
+  }
+  return { kept, left };
 }
 
 // --- File radar: rows of the base linked to files (paths), kept as a local index by the

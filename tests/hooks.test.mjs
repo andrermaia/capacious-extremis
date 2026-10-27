@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { searchWords, cleanPrompt } from '../scripts/hooks/hook-lib.mjs';
+import { searchWords, cleanPrompt, packUnits, SESSION_BUDGET } from '../scripts/hooks/hook-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillDir = path.resolve(__dirname, '..');
@@ -658,6 +658,26 @@ test('a note already shown in this context is named, not repeated, until the con
   await runHook(ws, api, 'on-session-start.mjs', { session_id: 's47', hook_event_name: 'SessionStart', source: 'compact' });
   const third = (await prompt('s47', 'corrija o boletim do louza')).hookSpecificOutput.additionalContext;
   assert.match(third, /- louza\/LOUZA-BOLETIM-1 · Boletim do louza/);
+});
+
+test('units go in whole while they fit the budget; the first always goes in', () => {
+  const u = (n, size) => ({ name: n, lines: ['x'.repeat(size)] });
+  const { kept, left } = packUnits([u('a', 500), u('b', 400), u('c', 50)], 600);
+  assert.deepEqual(kept.map((x) => x.name), ['a', 'c']);
+  assert.deepEqual(left.map((x) => x.name), ['b']);
+  assert.equal(packUnits([u('big', 5000)], 600).kept.length, 1);
+});
+
+test('the session start stays within its budget and says what was left out', async () => {
+  const changed = Array.from({ length: 40 }, (_, i) => ({ project_id: 'louza', id: `NOTE-${i}`, summary: `Decision number ${i} about the louza boletim, long enough to weigh in the budget of the session` }));
+  api.setDigest({ days: 7, counts: { louza: 40 }, changed, drafts: [], drafts_total: 0 });
+  const out = await runHook(ws, api, 'on-session-start.mjs', { session_id: 's48', hook_event_name: 'SessionStart', source: 'startup' });
+  const ctx = out.hookSpecificOutput.additionalContext;
+  const variable = ctx.slice(0, ctx.indexOf('PROTOCOLO'));
+  assert.ok(variable.length < SESSION_BUDGET + 600, `variable part ${variable.length}`);
+  assert.match(ctx, /- \+\d+ fora do limite de contexto/);
+  assert.match(ctx, /PROTOCOLO/);
+  api.setDigest(null);
 });
 
 test('commits come from the products the request names; at the root with none named, no commits', async () => {

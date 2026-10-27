@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, callApi, withLocalFallback,
-  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, apiRequest, savePathsIndex, CLI,
+  saveModulesCache, stateFile, scriptPath, cliEnv, apiUrl, protocolText, apiRequest, savePathsIndex, CLI, packUnits, SESSION_BUDGET,
 } from './hook-lib.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -81,25 +81,10 @@ const fresh = (t, ms) => now - Date.parse(t.updated_at) < ms && !mine.has(t.id);
 const realStep = (t) => t.current_step && t.current_step !== 'Task started';
 const taskLine = (t) => `- ${t.id} · ${t.module} · ${age(t.updated_at)} · ${cut(t.task_description, 70)}${realStep(t) ? ` — ${cut(t.current_step, 70)}` : ''}`;
 
-const sections = [];
 const openNow = rows(open).filter((t) => fresh(t, RECENT_MS)).slice(0, 4);
-if (openNow.length) sections.push('Em andamento em outras sessões (48 h):', ...openNow.map(taskLine));
 const stuck = rows(blocked).filter((t) => fresh(t, BLOCKED_MS)).slice(0, 3);
-if (stuck.length) sections.push('Bloqueadas (14 dias):', ...stuck.map(taskLine));
 const results = rows(done).filter((t) => /^resultado:/i.test(t.current_step || '')).slice(0, 3);
-if (results.length) {
-  sections.push('Resultados recentes:',
-    ...results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`));
-}
 const pending = rows(inProgress).filter((k) => now - Date.parse(k.updated_at) < ITEM_MS).slice(0, 4);
-if (pending.length) {
-  sections.push('Itens em andamento na base (14 dias):', ...pending.map((k) => `- ${k.id}${k.tasks_progress ? ` (${k.tasks_progress})` : ''} · ${cut(k.summary, 110)}`));
-}
-
-// The weekly hygiene report, while it still has findings.
-if (hygiene.ok && hygiene.data?.knowledge_type === 'technical_debt') {
-  sections.push('Faxina da base:', `- ${cut(hygiene.data.summary, 220)} (detalhes: ${CLI} get HYGIENE-REPORT --project global)`);
-}
 
 state.project = project;
 state.sessionContext = { at: new Date().toISOString(), source: input.source || 'startup' };
@@ -112,24 +97,37 @@ const moduleLine = modules.length
   : '(nenhum módulo cadastrado — rode bootstrap-scan ou init)';
 // What changed in the base this week replaces the module list (list-modules still has it): a
 // handful of decisions and debts, and the drafts the Stop hook left for confirmation.
-const week = [];
-if (digest.ok && digest.data?.counts) {
-  const counts = Object.entries(digest.data.counts).map(([p, n]) => `${p} ${n}`).join(', ');
-  if (digest.data.changed?.length) {
-    week.push(`Novidades da base (${digest.data.days} dias · ${counts}):`,
-      ...digest.data.changed.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 120)}`));
-  }
-  if (digest.data.drafts?.length) {
-    week.push(`Rascunhos a confirmar (${digest.data.drafts_total}; trabalho que terminou sem upsert):`,
-      ...digest.data.drafts.map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 110)}`),
-      'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela).');
-  }
-}
+const hasDigest = digest.ok && digest.data?.counts;
+const counts = hasDigest ? Object.entries(digest.data.counts).map(([p, n]) => `${p} ${n}`).join(', ') : '';
+// The sections in the order they are shown; `rank` is the order they get the budget in (what
+// other sessions are doing and how recent work ended matter most; drafts and hygiene least).
+const groups = [
+  { rank: 2, title: `Novidades da base (${digest.data?.days} dias · ${counts}):`, items: hasDigest ? (digest.data.changed || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 120)}`) : [] },
+  { rank: 5, title: `Rascunhos a confirmar (${digest.data?.drafts_total}; trabalho que terminou sem upsert):`,
+    items: hasDigest ? (digest.data.drafts || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 110)}`) : [],
+    footer: 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela).' },
+  { rank: 0, title: 'Em andamento em outras sessões (48 h):', items: openNow.map(taskLine) },
+  { rank: 4, title: 'Bloqueadas (14 dias):', items: stuck.map(taskLine) },
+  { rank: 1, title: 'Resultados recentes:', items: results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`) },
+  { rank: 3, title: 'Itens em andamento na base (14 dias):', items: pending.map((k) => `- ${k.id}${k.tasks_progress ? ` (${k.tasks_progress})` : ''} · ${cut(k.summary, 110)}`) },
+  // The weekly hygiene report, while it still has findings.
+  { rank: 6, title: 'Faxina da base:', items: hygiene.ok && hygiene.data?.knowledge_type === 'technical_debt' ? [`- ${cut(hygiene.data.summary, 220)} (detalhes: ${CLI} get HYGIENE-REPORT --project global)`] : [] },
+];
+// Items go in whole, section by section in rank order, while they fit the budget; a section's
+// title (and footer) is paid by its first item.
+const units = [...groups].sort((a, b) => a.rank - b.rank).flatMap((g) => g.items.map((line, i) => ({ g, line,
+  lines: i === 0 ? [g.title, line, ...(g.footer ? [g.footer] : [])] : [line] })));
+const { kept } = packUnits(units, SESSION_BUDGET);
+const shownBlock = groups.flatMap((g) => {
+  const lines = kept.filter((u) => u.g === g).map((u) => u.line);
+  if (!lines.length) return [];
+  const more = g.items.length - lines.length;
+  return ['', g.title, ...lines, ...(more > 0 ? [`- +${more} fora do limite de contexto`] : []), ...(g.footer ? [g.footer] : [])];
+});
 const context = [
   `[managing-system-context] Início de sessão · projeto ${project} (pasta ${folder}) · fonte ${listing.source === 'api' ? 'API' : 'cache local (somente leitura)'}${listing.apiError ? ` — API indisponível: ${cut(listing.apiError, 100)}` : ''}.`,
-  ...(digest.ok && digest.data?.counts ? [] : [`Módulos: ${moduleLine}`]),
-  ...(week.length ? ['', ...week] : []),
-  ...(sections.length ? ['', ...sections] : []),
+  ...(hasDigest ? [] : [`Módulos: ${moduleLine}`]),
+  ...shownBlock,
   '',
   protocolText(project),
 ].join('\n');
