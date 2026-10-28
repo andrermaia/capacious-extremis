@@ -116,7 +116,7 @@ for (const [i, task] of open.entries()) {
 state.turn = { ...(state.turn || {}), reminded: false };
 saveState(input.session_id, state);
 
-const saved = upserts ? `${upserts} conhecimento(s) gravado(s)` : draftId ? `nada gravado; rascunho ${draftId} para confirmar` : 'nada gravado na base';
+const saved = upserts ? `${upserts} conhecimento(s) gravado(s)` : draftId ? `nada gravado; rascunho ${draftId} ${process.env.CONTEXT_AUTO_CONFIRM === '0' ? 'para confirmar' : '(a consolidação o transforma em nota; sem ela, sai em 3 dias)'}` : 'nada gravado na base';
 const parts = [];
 if (closed.length) parts.push(`🏁 ${STAGE.CLOSE} · ${closed.join(', ')} fechada(s) · ${saved}`);
 else if (!failed.length) parts.push(`🏁 ${STAGE.CLOSE} · ${saved}`);

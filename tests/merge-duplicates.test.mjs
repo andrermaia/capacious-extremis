@@ -127,10 +127,12 @@ test('submit then collect, against fake Anthropic and context APIs', async (t) =
   ended = true;
   const third = await run();
   assert.equal(third.code, 0, third.out);
-  assert.equal(upserts.length, 1);
+  assert.equal(upserts.length, 2, 'the draft, then the merged note auto-confirm applies at once');
   assert.match(upserts[0].url, /project=louza/);
   assert.equal(upserts[0].body.id, 'MERGE-AUTH-2');
   assert.equal(upserts[0].body.module, 'drafts');
+  assert.equal(upserts[1].body.id, 'AUTH-2');
+  assert.equal(upserts[1].body.supersedes, 'AUTH-1,louza/MERGE-AUTH-2');
   assert.equal(sent.length, 1, 'a proposed pair is not sent (nor paid) again');
   const ledger = fs.readFileSync(path.join(tmp, 'state', 'usage.jsonl'), 'utf8').trim().split('\n');
   assert.equal(ledger.length, 1);

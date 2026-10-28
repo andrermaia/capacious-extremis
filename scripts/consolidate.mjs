@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configuredEnv } from './api-config.mjs';
 import { callApi, apiRequest, searchWords, PROJECTS } from './hooks/hook-lib.mjs';
+import { AUTO, applyDraft } from './auto-confirm.mjs';
 
 export const MODEL = 'claude-haiku-5-5';
 // Per million tokens, prompts up to 100k tokens; the Batches API halves both.
@@ -428,8 +429,11 @@ async function saveDrafts(state) {
   const left = [];
   for (const item of state.unsaved || []) {
     const r = await apiRequest(item.root, 'POST', `upsert?project=${encodeURIComponent(item.project)}`, item.draft, { timeoutMs: 10_000 });
-    if (r.ok) saved++;
-    else { left.push(item); log(`rascunho ${item.draft.id}: ${r.error}`); }
+    if (r.ok) {
+      saved++;
+      // Its notes saved now, vetted by fixed rules; what fails stays in the audit (auto-confirm.mjs).
+      if (AUTO) await applyDraft(item.root, item.project, item.draft).catch((err) => log(`auto ${item.draft.id}: ${err.message}`));
+    } else { left.push(item); log(`rascunho ${item.draft.id}: ${r.error}`); }
   }
   state.unsaved = left;
   return saved;

@@ -3,7 +3,7 @@
 // finds pairs of notes in the same project whose summaries share most of their words; each pair
 // goes to Haiku, which says whether they state the same fact and, when they do, writes the merged
 // note. What comes back is a draft (module drafts) holding the upsert that keeps one ID and
-// supersedes the other: nothing changes in the base until an agent or the user confirms it.
+// supersedes the other, applied at once by auto-confirm.mjs when it passes the fixed checks.
 //
 // Same key and switches as consolidate.mjs (CONTEXT_CONSOLIDATE_API_KEY or ..._KEY_FILE,
 // CONTEXT_CONSOLIDATE=0 off); its spend goes to the same ledger, so `consolidate.mjs status`
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { MODEL, consolidateDir, apiKey, scrub, costOf, anthropic } from './consolidate.mjs';
 import { duplicates } from './hygiene.mjs';
 import { apiRequest, PROJECTS } from './hooks/hook-lib.mjs';
+import { AUTO, applyDraft } from './auto-confirm.mjs';
 
 // Pairs per run: a weekly run over a tidy base finds few; the cap keeps a messy one cheap.
 const MAX_PAIRS = 20;
@@ -155,8 +156,10 @@ export async function collect(key, state, root) {
   const left = [];
   for (const item of state.unsaved || []) {
     const r = await apiRequest(root, 'POST', `upsert?project=${encodeURIComponent(item.project)}`, item.draft, { timeoutMs: 10_000 });
-    if (r.ok) saved++;
-    else { left.push(item); log(`rascunho ${item.draft.id}: ${r.error}`); }
+    if (r.ok) {
+      saved++;
+      if (AUTO) await applyDraft(root, item.project, item.draft).catch((err) => log(`auto ${item.draft.id}: ${err.message}`));
+    } else { left.push(item); log(`rascunho ${item.draft.id}: ${r.error}`); }
   }
   state.unsaved = left;
   return saved;

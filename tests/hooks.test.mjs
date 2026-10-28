@@ -517,7 +517,7 @@ test('session start shows the week\'s digest and the drafts to confirm in place 
   const out = await sessionStart('s40');
   const ctx = out.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Novidades da base \(7 dias · louza 12, projetos 3\):\n- louza\/DEC-BOLETIM · Trimester closes by weighted mean/);
-  assert.match(ctx, /Rascunhos a confirmar \(1; [^)]*\):\n- louza\/DRAFT-ABC-1 · Rascunho: ajustar a parcela/);
+  assert.match(ctx, /Rascunhos abertos \(1; [^)]*\):\n- louza\/DRAFT-ABC-1 · Rascunho: ajustar a parcela/);
   assert.match(ctx, /"supersedes":"<ID do rascunho>"/);
   assert.doesNotMatch(ctx, /Módulos:/);
   // At the root the digest spans every project.
@@ -565,7 +565,7 @@ test('a turn that edited files and saved nothing leaves a draft for the next ses
   assert.match(draft.body.keywords, /parcela/);
   const link = api.routes('paths').find((c) => c.method === 'POST');
   assert.deepEqual(link.body.items, [{ id: 'DRAFT-FAKE1-1', paths: ['src/parcela.service.ts'], mode: 'append' }]);
-  assert.match(out.systemMessage, /rascunho louza\/DRAFT-FAKE1-1 para confirmar/);
+  assert.match(out.systemMessage, /rascunho louza\/DRAFT-FAKE1-1 \(a consolidação o transforma em nota/);
 });
 
 test('no draft for a quick fix, for a turn that saved its knowledge, or for files outside the root', async () => {

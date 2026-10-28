@@ -6,6 +6,7 @@
 // in the background (sync-rules, at most every 10 minutes).
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, runCliAsync, callApi, withLocalFallback,
@@ -49,6 +50,9 @@ inBackground('consolidate', 2 * 60 * 60 * 1000, [scriptPath('consolidate.mjs'), 
 // Duplicate notes become merge drafts the same way; daily so a batch is collected the day after,
 // and cheap because a pair is proposed only once.
 inBackground('merge-duplicates', DAY_MS, [scriptPath('merge-duplicates.mjs'), '--quiet']);
+// Drafts with proposals become notes by fixed rules; thin Stop drafts retire after 3 days.
+const AUTO = process.env.CONTEXT_AUTO_CONFIRM !== '0';
+if (AUTO) inBackground('auto-confirm', DAY_MS, [scriptPath('auto-confirm.mjs'), '--quiet']);
 
 // At the root the digest spans every project; inside a product, that product and the cross-project rows.
 const digestScope = project === path.basename(root).toLowerCase() ? '' : `project=${encodeURIComponent(`${project},projetos`)}&`;
@@ -106,10 +110,14 @@ const counts = hasDigest ? Object.entries(digest.data.counts).map(([p, n]) => `$
 // other sessions are doing and how recent work ended matter most; drafts and hygiene least).
 const groups = [
   { rank: 2, title: `Novidades da base (${digest.data?.days} dias · ${counts}):`, items: hasDigest ? (digest.data.changed || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 120)}`) : [] },
-  { rank: 5, title: `Rascunhos a confirmar (${digest.data?.drafts_total}; trabalho que terminou sem upsert):`,
+  { rank: 5, title: AUTO ? `Rascunhos abertos (${digest.data?.drafts_total}; os com notas propostas viram nota sozinhos):` : `Rascunhos a confirmar (${digest.data?.drafts_total}; trabalho que terminou sem upsert):`,
     items: hasDigest ? (digest.data.drafts || []).map((k) => `- ${k.project_id}/${k.id} · ${cut(k.summary, 110)}`) : [],
-    footer: 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela). '
-      + `Rascunho (Haiku) com notas propostas: ${CLI} confirm-draft <ID> --project <p> grava todas numa chamada (--ids A,B · --skip 2 · --discard descarta).` },
+    footer: AUTO
+      ? 'Ninguém precisa confirmá-los: auto-confirm grava as notas propostas que passam nas regras fixas e aposenta o resto; rascunho sem propostas sai em 3 dias, handoff fica para quem retomar. '
+        + 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>". CONTEXT_AUTO_CONFIRM=0 volta à confirmação manual.'
+      : 'Ao retomar um deles, grave a linha real com "supersedes":"<ID do rascunho>" (o rascunho sai e os arquivos passam para ela). '
+        + `Rascunho (Haiku) com notas propostas: ${CLI} confirm-draft <ID> --project <p> grava todas numa chamada (--ids A,B · --skip 2 · --discard descarta).` },
+  { rank: 5, title: 'Notas gravadas automaticamente de rascunhos (24 h):', items: autoApplied().map((e) => `- ${e.project}/${e.id} · ${cut(e.summary, 110)}`) },
   { rank: 0, title: 'Em andamento em outras sessões (48 h):', items: openNow.map(taskLine) },
   { rank: 4, title: 'Bloqueadas (14 dias):', items: stuck.map(taskLine) },
   { rank: 1, title: 'Resultados recentes:', items: results.map((t) => `- ${age(t.updated_at)} · ${cut(t.task_description, 60)} → ${cut(String(t.current_step).replace(/^resultado:\s*/i, ''), 110)}`) },
@@ -143,6 +151,15 @@ emit({
 
 // Runs a script detached, at most once per `everyMs` across all sessions (stamp file);
 // the session never waits for it. CONTEXT_SYNC_RULES=0 turns every background job off (tests).
+// What auto-confirm.mjs saved in the last day (its audit file; read here so the hook loads no more code).
+function autoApplied() {
+  const file = path.join(process.env.CONTEXT_CONSOLIDATE_DIR || path.join(os.homedir(), '.claude', 'context-consolidate'), 'auto-applied.jsonl');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
+  return text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((e) => e && e.action === 'applied' && Date.now() - new Date(e.at).getTime() < DAY_MS).slice(-8);
+}
+
 function inBackground(name, everyMs, args) {
   if (process.env.CONTEXT_SYNC_RULES === '0') return;
   const stamp = path.join(path.dirname(stateFile(name)), `${name}.stamp`);
