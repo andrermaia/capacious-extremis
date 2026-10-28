@@ -690,3 +690,17 @@ test('commits come from the products the request names; at the root with none na
   assert.equal(none.commits, '0');
   assert.equal(none.commit_projects, undefined);
 });
+
+test('on-prompt warns the user (systemMessage only) when the session context is large', async () => {
+  const usage = (n) => ({ type: 'assistant', message: { id: 'm', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, cache_read_input_tokens: n, cache_creation_input_tokens: 0, output_tokens: 5 } } });
+  const file = path.join(ws.base, 'big.jsonl');
+  fs.writeFileSync(file, [usage(100_000), usage(520_000)].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const out = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'big', hook_event_name: 'UserPromptSubmit', prompt: 'Corrija o boletim do louza', transcript_path: file });
+  assert.match(out.systemMessage, /contexto em 520k tokens/);
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /contexto em/);
+  // Codex transcript: token_count last_token_usage; below the threshold there is no warning.
+  const codex = path.join(ws.base, 'codex.jsonl');
+  fs.writeFileSync(codex, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 90_000, cached_input_tokens: 80_000 } } } }) + '\n');
+  const small = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'cx', hook_event_name: 'UserPromptSubmit', prompt: 'Corrija o boletim do louza', transcript_path: codex });
+  assert.doesNotMatch(small.systemMessage, /contexto em/);
+});

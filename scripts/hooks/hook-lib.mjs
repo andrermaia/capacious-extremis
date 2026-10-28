@@ -203,6 +203,21 @@ function readTail(file, bytes = 1024 * 1024) {
   }
 }
 
+// Tokens the model re-read on the session's last turn (the context size): Claude Code
+// message.usage (input + cache read + cache write), Codex token_count last_token_usage
+// (input_tokens already counts the cached part). 0 when the transcript has no usage.
+export function contextTokens(file) {
+  const records = readTail(file, 256 * 1024);
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i];
+    const u = rec.type === 'assistant' && rec.message?.usage;
+    if (u) return (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    const c = rec.payload?.type === 'token_count' && rec.payload.info?.last_token_usage;
+    if (c) return c.input_tokens || 0;
+  }
+  return 0;
+}
+
 // A transcript as events, whichever agent wrote it: { kind: prompt | tool | result | answer }.
 // Claude Code {type, message.content}; Codex {type: event_msg, payload: item_completed}; agy
 // {step_index, source, type}; Kimi Code {type: turn.prompt | context.append_loop_event}.

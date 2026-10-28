@@ -7,11 +7,13 @@ import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
   runCliAsync, callApi, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
-  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, productsNamed, STAGE,
+  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, productsNamed, STAGE, contextTokens,
 } from './hook-lib.mjs';
 
 // A task left open longer than this belongs to an old turn (resumed session): close it.
 const STALE_MS = 6 * 60 * 60 * 1000;
+// Above this many tokens re-read per turn the prompt line warns the user (CONTEXT_WARN_TOKENS overrides).
+const CONTEXT_WARN = Number(process.env.CONTEXT_WARN_TOKENS) || 400_000;
 
 const input = readStdinJson();
 const root = projectRoot(input);
@@ -126,9 +128,13 @@ const context = [
   ...(primed ? [] : ['', `Fonte: ${result.source === 'api' ? `API ${result.apiUrl}` : 'cache local (somente leitura)'} ${sourceFlags(result.source)}`, `Módulos: ${moduleLine}`, '', protocolText(project)]),
 ].join('\n');
 
+// A large context is re-read on every turn: warn the user (systemMessage only, no model tokens).
+const ctxTokens = contextTokens(input.transcript_path);
+const ctxWarn = ctxTokens > CONTEXT_WARN ? ` · ⚠️ contexto em ${Math.round(ctxTokens / 1000)}k tokens: cada turno relê tudo; considere /compact ou uma sessão nova` : '';
+
 emit({
   systemMessage: `📚 ${STAGE.CONTEXT} · projeto ${project}${hits.length ? ` · ${hits.length - 1} item(ns) da base` : ''} · ` +
-    (taskId ? `🟢 ${STAGE.TASK} · ${taskId}${current ? ' (continuação)' : ''}` : trivial ? 'pedido curto, sem tarefa' : '⚠️ tarefa não aberta'),
+    (taskId ? `🟢 ${STAGE.TASK} · ${taskId}${current ? ' (continuação)' : ''}` : trivial ? 'pedido curto, sem tarefa' : '⚠️ tarefa não aberta') + ctxWarn,
   hookSpecificOutput: {
     hookEventName: 'UserPromptSubmit',
     additionalContext: context,
