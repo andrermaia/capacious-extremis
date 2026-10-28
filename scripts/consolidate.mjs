@@ -365,7 +365,7 @@ export function costOf(usage) {
   return ((input * (long ? PRICE.longInput : PRICE.input) + output * (long ? PRICE.longOutput : PRICE.output)) / 1e6) * PRICE.batch;
 }
 
-async function anthropic(key, method, endpoint, body) {
+export async function anthropic(key, method, endpoint, body) {
   const res = await fetch(`${apiBase()}${endpoint}`, {
     method,
     headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
