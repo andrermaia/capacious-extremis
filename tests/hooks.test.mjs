@@ -20,6 +20,7 @@ function fakeApi() {
   let hygieneReport = null;
   let pathsRows = [];
   let digestReply = null;
+  let playbook = null;
   let n = 0;
   const task = (id) => tasks.find((t) => t.id === id) || {};
   const server = http.createServer((req, res) => {
@@ -77,7 +78,8 @@ function fakeApi() {
           const drafts = url.searchParams.get('drafts') ? [{ project_id: 'louza', id: 'DRAFT-T-1', summary: 'Rascunho: ajustar o boletim do louza → feito em parte' }] : undefined;
           return { query: words.join(' '), scope: 'all', knowledge, tasks: [], semantic, commits, related, drafts };
         },
-      }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null);
+      }[route] || (route === 'knowledge/HYGIENE-REPORT' && hygieneReport ? () => hygieneReport : null)
+        || (route.startsWith('knowledge/PLAYBOOK-') && playbook ? () => playbook : null);
       res.writeHead(reply ? 200 : 404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(reply ? reply() : { error: 'not found' }));
     });
@@ -91,6 +93,7 @@ function fakeApi() {
     setHygiene: (r) => { hygieneReport = r; },
     setPaths: (rows) => { pathsRows = rows; },
     setDigest: (r) => { digestReply = r; },
+    setPlaybook: (r) => { playbook = r; },
     close: () => server.close(),
   })));
 }
@@ -703,4 +706,22 @@ test('on-prompt warns the user (systemMessage only) when the session context is 
   fs.writeFileSync(codex, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 90_000, cached_input_tokens: 80_000 } } } }) + '\n');
   const small = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'cx', hook_event_name: 'UserPromptSubmit', prompt: 'Corrija o boletim do louza', transcript_path: codex });
   assert.doesNotMatch(small.systemMessage, /contexto em/);
+});
+
+test('a development request gets the playbook pointer and the confirmed product playbook, once per session', async () => {
+  api.setPlaybook({ id: 'PLAYBOOK-PROJETOS', module: 'playbook', phase: 'implemented', summary: 's', details: 'Checks: npm test. Deploy: push main.' });
+  const first = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'dev1', hook_event_name: 'UserPromptSubmit', prompt: 'Implemente a exportação do boletim do louza' });
+  const ctx = first.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /rules[\\/]desenvolvimento\.md/);
+  assert.match(ctx, /Checks: npm test/);
+  const again = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'dev1', hook_event_name: 'UserPromptSubmit', prompt: 'Implemente agora a importação' });
+  assert.doesNotMatch(again.hookSpecificOutput.additionalContext, /desenvolvimento\.md/);
+  // A draft playbook stays out; a plain fix gets nothing.
+  api.setPlaybook({ id: 'PLAYBOOK-PROJETOS', module: 'drafts', phase: 'queued', summary: 's', details: 'DRAFT TEXT' });
+  const draft = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'dev2', hook_event_name: 'UserPromptSubmit', prompt: 'Crie a tela de matrícula do louza' });
+  assert.doesNotMatch(draft.hookSpecificOutput.additionalContext, /DRAFT TEXT/);
+  assert.match(draft.hookSpecificOutput.additionalContext, /Sem PLAYBOOK-\w+ confirmado/);
+  const fix = await runHook(ws, api, 'on-prompt.mjs', { session_id: 'dev3', hook_event_name: 'UserPromptSubmit', prompt: 'Corrija o boletim do louza' });
+  assert.doesNotMatch(fix.hookSpecificOutput.additionalContext, /desenvolvimento\.md/);
+  api.setPlaybook(null);
 });

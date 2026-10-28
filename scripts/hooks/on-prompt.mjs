@@ -7,7 +7,7 @@ import path from 'node:path';
 import {
   readStdinJson, emit, projectRoot, detectProject, loadState, saveState, openTasks, recordTask,
   runCliAsync, callApi, withLocalFallback, sourceFlags, loadModulesCache, saveModulesCache, cleanPrompt,
-  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, productsNamed, STAGE, contextTokens,
+  guessModule, searchWords, isTrivialPrompt, hitsBlock, protocolText, apiUrl, productsNamed, STAGE, contextTokens, scriptPath,
 } from './hook-lib.mjs';
 
 // A task left open longer than this belongs to an old turn (resumed session): close it.
@@ -119,12 +119,27 @@ const shown = String(input.session_id || '').startsWith('agy-') ? null : (state.
 const hits = found?.ok ? hitsBlock(found.data, words, new Set((state.tasks || []).map((t) => t.id)), shown) : [];
 if (shown) saveState(input.session_id, state);
 
+// A development request gets, once per session, a pointer to the development playbook and
+// the product's confirmed PLAYBOOK-<PROJECT> note (a draft stays out until the user confirms it).
+const DEV_INTENT = /\b(implement\w*|cri(e|ar|ação)\b|desenvolv\w*|constru(a|ir)\b|build|refator\w*|nova funcionalidade|feature)/i;
+const dev = [];
+if (!notice && !trivial && !state.devHinted && DEV_INTENT.test(fullPrompt)) {
+  state.devHinted = true;
+  saveState(input.session_id, state);
+  const id = `PLAYBOOK-${project.toUpperCase()}`;
+  const pb = await callApi(root, ['get', id, '--project', project, '--api-url', url], { timeoutMs: 5000 }).catch(() => ({}));
+  const note = pb?.ok && pb.data && pb.data.module !== 'drafts' && pb.data.phase !== 'deprioritized' ? pb.data : null;
+  dev.push('', `Desenvolvimento: siga ${path.join(path.dirname(scriptPath('x')), '..', 'rules', 'desenvolvimento.md')} (leia antes de propor): base e código antes de perguntar, spec → plano → teste que falha → código → verificação real.`,
+    note ? `${id} (regras do produto, valem sobre o playbook geral):\n${String(note.details || note.summary).slice(0, 2500)}` : `Sem ${id} confirmado: use as skills deploy-<repo> do repositório e as notas DEPLOY-* da base.`);
+}
+
 // With the session context in place (protocol, modules) the prompt only needs the task
 // line and what the search found; otherwise (hooks installed mid-session, no session
 // start) it carries the whole protocol, as before.
 const context = [
   `[managing-system-context] Projeto ${project} (pasta ${folder}) · ${taskLine}${result.apiError && taskId ? ` API instável: ${String(result.apiError).slice(0, 80)}` : ''}`,
   ...hits,
+  ...dev,
   ...(primed ? [] : ['', `Fonte: ${result.source === 'api' ? `API ${result.apiUrl}` : 'cache local (somente leitura)'} ${sourceFlags(result.source)}`, `Módulos: ${moduleLine}`, '', protocolText(project)]),
 ].join('\n');
 
